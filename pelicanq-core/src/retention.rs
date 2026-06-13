@@ -7,6 +7,8 @@ pub struct RetentionPolicy {
     pub max_age_secs: Option<u64>,
     /// Maximum number of messages allowed in the queue.
     pub max_messages: Option<u64>,
+    /// Maximum delivery attempts before routing to the dead-letter queue.
+    pub max_delivery_attempts: Option<u32>,
 }
 
 impl Default for RetentionPolicy {
@@ -15,15 +17,21 @@ impl Default for RetentionPolicy {
         Self {
             max_age_secs: None,
             max_messages: None,
+            max_delivery_attempts: None,
         }
     }
 }
 
 impl RetentionPolicy {
-    pub fn new(max_age_secs: Option<u64>, max_messages: Option<u64>) -> Self {
+    pub fn new(
+        max_age_secs: Option<u64>,
+        max_messages: Option<u64>,
+        max_delivery_attempts: Option<u32>,
+    ) -> Self {
         Self {
             max_age_secs,
             max_messages,
+            max_delivery_attempts,
         }
     }
 }

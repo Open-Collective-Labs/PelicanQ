@@ -17,4 +17,7 @@ pub enum PelicanError {
 
     #[error("storage watermark exceeded: disk usage at {used_pct}%, limit is {limit_pct}%")]
     StorageLimitExceeded { used_pct: u8, limit_pct: u8 },
+
+    #[error("message dead-lettered: queue={queue}, dlq={dlq}")]
+    MessageDeadLettered { queue: String, dlq: String },
 }
