@@ -40,6 +40,9 @@ pub struct Message {
     /// Delivery priority, 0 (lowest, default) to 9 (highest). Higher values are
     /// delivered before lower values; within the same priority, FIFO order applies.
     pub priority: u8,
+    /// If set, this message is not eligible for consumption until this unix
+    /// timestamp (milliseconds). None means immediately eligible (default).
+    pub deliver_at: Option<i64>,
 }
 
 impl Message {
@@ -52,6 +55,7 @@ impl Message {
             timestamp: Self::now_ms(),
             delivery_attempts: 0,
             priority: 0,
+            deliver_at: None,
         }
     }
 
@@ -61,7 +65,14 @@ impl Message {
         self
     }
 
-    fn now_ms() -> i64 {
+    /// Sets a future delivery time (unix millis). If `deliver_at <= now`, the
+    /// message is immediately eligible — validated at publish time.
+    pub fn with_deliver_at(mut self, deliver_at_ms: i64) -> Self {
+        self.deliver_at = Some(deliver_at_ms);
+        self
+    }
+
+    pub(crate) fn now_ms() -> i64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -133,5 +144,18 @@ mod tests {
 
         let deserialized: DeliveryTag = serde_json::from_str("99").unwrap();
         assert_eq!(deserialized, DeliveryTag(99));
+    }
+
+    #[test]
+    fn test_new_message_deliver_at_none() {
+        let msg = Message::new(b"data".to_vec(), HashMap::new());
+        assert_eq!(msg.deliver_at, None);
+    }
+
+    #[test]
+    fn test_with_deliver_at_sets_value() {
+        let msg = Message::new(b"data".to_vec(), HashMap::new())
+            .with_deliver_at(999_999);
+        assert_eq!(msg.deliver_at, Some(999_999));
     }
 }

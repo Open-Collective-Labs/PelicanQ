@@ -79,7 +79,7 @@ impl QueueManager {
         Ok(mgr)
     }
 
-    /// Recalculates the total byte count by summing all queue, inflight, and DLQ entries.
+    /// Recalculates the total byte count by summing all queue, inflight, DLQ, and scheduled entries.
     fn recalculate_bytes(&self) -> Result<u64, PelicanError> {
         let mut total: u64 = 0;
         for name in self.list_queues() {
@@ -95,6 +95,11 @@ impl QueueManager {
             }
             let dlq = self.db.open_tree(Self::dlq_tree_name(&name))?;
             for entry in dlq.iter() {
+                let (_, value) = entry?;
+                total += value.len() as u64;
+            }
+            let scheduled = self.db.open_tree(Self::scheduled_tree_name(&name))?;
+            for entry in scheduled.iter() {
                 let (_, value) = entry?;
                 total += value.len() as u64;
             }
@@ -141,6 +146,20 @@ impl QueueManager {
         format!("dlq:{}", name)
     }
 
+    fn scheduled_tree_name(name: &str) -> String {
+        format!("scheduled:{}", name)
+    }
+
+    /// Encodes a 16-byte scheduled key: 8 bytes big-endian `deliver_at_ms`
+    /// (cast to u64 — always positive for future timestamps), followed by
+    /// 8 bytes big-endian id.
+    fn encode_scheduled_key(deliver_at_ms: i64, id: u64) -> [u8; 16] {
+        let mut key = [0u8; 16];
+        key[0..8].copy_from_slice(&(deliver_at_ms as u64).to_be_bytes());
+        key[8..16].copy_from_slice(&id.to_be_bytes());
+        key
+    }
+
     /// Encodes a 9-byte storage key: 1 byte priority prefix so higher priority
     /// sorts first, followed by 8 bytes big-endian id.
     fn encode_key(priority: u8, id: u64) -> [u8; 9] {
@@ -168,13 +187,17 @@ impl QueueManager {
         self.db.open_tree(name)?;
         self.db.open_tree(Self::inflight_tree_name(name))?;
         self.db.open_tree(Self::dlq_tree_name(name))?;
+        self.db.open_tree(Self::scheduled_tree_name(name))?;
         let policy_bytes = bincode::serialize(&policy)?;
         self.retention_tree.insert(name, policy_bytes)?;
         Ok(())
     }
 
-    /// Publishes a message to the named queue. Errors if the queue doesn't exist
-    /// or if the storage limit would be exceeded.
+    /// Publishes a message to the named queue. If `message.deliver_at` is set
+    /// to a future timestamp, the message is stored in the scheduled tree and
+    /// won't be visible to `consume` until `promote_scheduled` moves it to the
+    /// main tree. Errors if the queue doesn't exist or if the storage limit
+    /// would be exceeded.
     pub fn publish(&mut self, queue: &str, message: Message) -> Result<(), PelicanError> {
         if !self.meta_tree.contains_key(queue)? {
             return Err(PelicanError::QueueNotFound(queue.to_string()));
@@ -197,8 +220,19 @@ impl QueueManager {
             }
         }
 
-        let tree = self.db.open_tree(queue)?;
         let id = self.db.generate_id()?;
+
+        if let Some(deliver_at) = message.deliver_at {
+            if deliver_at > Message::now_ms() {
+                let scheduled = self.db.open_tree(Self::scheduled_tree_name(queue))?;
+                let key = Self::encode_scheduled_key(deliver_at, id);
+                scheduled.insert(key.as_slice(), value.as_slice())?;
+                self.current_bytes += msg_len;
+                return Ok(());
+            }
+        }
+
+        let tree = self.db.open_tree(queue)?;
         let key = Self::encode_key(message.priority, id);
         tree.insert(key.as_slice(), value.as_slice())?;
 
@@ -368,7 +402,78 @@ impl QueueManager {
         Ok(dlq.len())
     }
 
-    /// Returns the current depth of the named queue. Errors if the queue doesn't exist.
+    /// Moves all scheduled messages whose `deliver_at` has passed (<= now) from
+    /// the scheduled tree into the main queue tree, using the message's priority
+    /// for key encoding. Returns the number of messages promoted.
+    /// This does NOT run automatically — callers invoke it periodically.
+    pub fn promote_scheduled(&mut self, queue: &str) -> Result<usize, PelicanError> {
+        if !self.meta_tree.contains_key(queue)? {
+            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        }
+
+        let scheduled = self.db.open_tree(Self::scheduled_tree_name(queue))?;
+        let tree = self.db.open_tree(queue)?;
+        let now_ms = Message::now_ms();
+
+        let mut to_promote: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+
+        for entry in scheduled.iter() {
+            let (key, value) = entry?;
+            let deliver_at_u64 = u64::from_be_bytes(
+                key[..8]
+                    .try_into()
+                    .map_err(|e: std::array::TryFromSliceError| {
+                        PelicanError::Storage(sled::Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            e,
+                        )))
+                    })?,
+            );
+            let deliver_at_ms = deliver_at_u64 as i64;
+            if deliver_at_ms > now_ms {
+                break;
+            }
+            to_promote.push((key.to_vec(), value.to_vec()));
+        }
+
+        let mut promoted = 0usize;
+        for (scheduled_key, value) in &to_promote {
+            let msg: Message = bincode::deserialize(value)?;
+            let new_id = self.db.generate_id()?;
+            let main_key = Self::encode_key(msg.priority, new_id);
+
+            let result: sled::transaction::TransactionResult<(), ()> =
+                (&scheduled, &tree).transaction(|(tx_scheduled, tx_tree)| {
+                    tx_scheduled.remove(scheduled_key.as_slice())?;
+                    tx_tree.insert(main_key.as_slice(), value.as_slice())?;
+                    Ok(())
+                });
+
+            match result {
+                Ok(()) => promoted += 1,
+                Err(sled::transaction::TransactionError::Abort(())) => {
+                    // Should not happen with our closure
+                }
+                Err(sled::transaction::TransactionError::Storage(e)) => {
+                    return Err(PelicanError::Storage(e));
+                }
+            }
+        }
+
+        Ok(promoted)
+    }
+
+    /// Number of messages waiting in the scheduled (not-yet-due) store for this queue.
+    pub fn scheduled_depth(&self, queue: &str) -> Result<usize, PelicanError> {
+        if !self.meta_tree.contains_key(queue)? {
+            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        }
+        let scheduled = self.db.open_tree(Self::scheduled_tree_name(queue))?;
+        Ok(scheduled.len())
+    }
+
+    /// Returns the current depth of the named queue (main tree only).
+    /// Errors if the queue doesn't exist.
     pub fn depth(&self, queue: &str) -> Result<usize, PelicanError> {
         if !self.meta_tree.contains_key(queue)? {
             return Err(PelicanError::QueueNotFound(queue.to_string()));
@@ -1055,6 +1160,133 @@ mod tests {
             assert_eq!(m1.payload, b"1");
             assert_eq!(m2.payload, b"2");
             assert_eq!(m3.payload, b"3");
+        });
+    }
+
+    // --- Phase 2, Step 4 acceptance tests (delayed / scheduled messages) ---
+
+    #[test]
+    fn test_scheduled_message_not_visible_to_consume() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("sched").unwrap();
+
+            let future = Message::now_ms() + 3_600_000; // 1 hour
+            mgr.publish(
+                "sched",
+                Message::new(b"future".to_vec(), std::collections::HashMap::new())
+                    .with_deliver_at(future),
+            )
+            .unwrap();
+
+            assert_eq!(mgr.depth("sched").unwrap(), 0);
+            assert_eq!(mgr.scheduled_depth("sched").unwrap(), 1);
+            assert!(mgr.consume("sched").unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn test_scheduled_not_yet_due_not_promoted() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("sched2").unwrap();
+
+            let future = Message::now_ms() + 3_600_000;
+            mgr.publish(
+                "sched2",
+                Message::new(b"future".to_vec(), std::collections::HashMap::new())
+                    .with_deliver_at(future),
+            )
+            .unwrap();
+
+            let promoted = mgr.promote_scheduled("sched2").unwrap();
+            assert_eq!(promoted, 0);
+            assert_eq!(mgr.depth("sched2").unwrap(), 0);
+            assert_eq!(mgr.scheduled_depth("sched2").unwrap(), 1);
+        });
+    }
+
+    #[test]
+    fn test_already_due_goes_to_main_tree() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("due").unwrap();
+
+            let past = Message::now_ms() - 100;
+            mgr.publish(
+                "due",
+                Message::new(b"past-due".to_vec(), std::collections::HashMap::new())
+                    .with_deliver_at(past),
+            )
+            .unwrap();
+
+            assert_eq!(mgr.depth("due").unwrap(), 1);
+            assert_eq!(mgr.scheduled_depth("due").unwrap(), 0);
+
+            let (_, msg) = mgr.consume("due").unwrap().unwrap();
+            assert_eq!(msg.payload, b"past-due");
+        });
+    }
+
+    #[test]
+    fn test_deliver_at_none_behaves_normally() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("normal").unwrap();
+
+            mgr.publish(
+                "normal",
+                Message::new(b"immediate".to_vec(), std::collections::HashMap::new()),
+            )
+            .unwrap();
+
+            assert_eq!(mgr.depth("normal").unwrap(), 1);
+            assert_eq!(mgr.scheduled_depth("normal").unwrap(), 0);
+
+            let (_, msg) = mgr.consume("normal").unwrap().unwrap();
+            assert_eq!(msg.payload, b"immediate");
+        });
+    }
+
+    #[test]
+    fn test_promote_scheduled_after_wait() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("delay").unwrap();
+
+            // Schedule a message 50ms in the future
+            let future = Message::now_ms() + 50;
+            mgr.publish(
+                "delay",
+                Message::new(b"delayed".to_vec(), std::collections::HashMap::new())
+                    .with_deliver_at(future),
+            )
+            .unwrap();
+
+            assert_eq!(mgr.depth("delay").unwrap(), 0);
+            assert_eq!(mgr.scheduled_depth("delay").unwrap(), 1);
+
+            // Wait long enough for it to become due
+            std::thread::sleep(std::time::Duration::from_millis(60));
+
+            let promoted = mgr.promote_scheduled("delay").unwrap();
+            assert_eq!(promoted, 1);
+            assert_eq!(mgr.depth("delay").unwrap(), 1);
+            assert_eq!(mgr.scheduled_depth("delay").unwrap(), 0);
+
+            let (_, msg) = mgr.consume("delay").unwrap().unwrap();
+            assert_eq!(msg.payload, b"delayed");
+        });
+    }
+
+    #[test]
+    fn test_scheduled_depth_on_nonexistent_queue() {
+        with_manager(|mgr| {
+            let err = mgr.scheduled_depth("nope");
+            assert!(matches!(err, Err(PelicanError::QueueNotFound(_))));
+        });
+    }
+
+    #[test]
+    fn test_promote_scheduled_on_nonexistent_queue() {
+        with_manager(|mut mgr| {
+            let err = mgr.promote_scheduled("nope");
+            assert!(matches!(err, Err(PelicanError::QueueNotFound(_))));
         });
     }
 }
