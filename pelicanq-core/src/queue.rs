@@ -8,6 +8,16 @@ use crate::message::DeliveryTag;
 use crate::message::Message;
 use crate::retention::RetentionPolicy;
 
+/// Outcome of a `publish` call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublishOutcome {
+    /// The message was stored. Contains the message's UUID.
+    Stored(uuid::Uuid),
+    /// The message was rejected as a duplicate (same `dedup_key` within the
+    /// deduplication window). Not stored.
+    Deduplicated,
+}
+
 /// An in-memory FIFO queue of messages.
 pub struct Queue {
     name: String,
@@ -103,6 +113,11 @@ impl QueueManager {
                 let (_, value) = entry?;
                 total += value.len() as u64;
             }
+            let dedup = self.db.open_tree(Self::dedup_tree_name(&name))?;
+            for entry in dedup.iter() {
+                let (_, value) = entry?;
+                total += value.len() as u64;
+            }
         }
         Ok(total)
     }
@@ -150,6 +165,10 @@ impl QueueManager {
         format!("scheduled:{}", name)
     }
 
+    fn dedup_tree_name(name: &str) -> String {
+        format!("dedup:{}", name)
+    }
+
     /// Encodes a 16-byte scheduled key: 8 bytes big-endian `deliver_at_ms`
     /// (cast to u64 — always positive for future timestamps), followed by
     /// 8 bytes big-endian id.
@@ -188,6 +207,7 @@ impl QueueManager {
         self.db.open_tree(Self::inflight_tree_name(name))?;
         self.db.open_tree(Self::dlq_tree_name(name))?;
         self.db.open_tree(Self::scheduled_tree_name(name))?;
+        self.db.open_tree(Self::dedup_tree_name(name))?;
         let policy_bytes = bincode::serialize(&policy)?;
         self.retention_tree.insert(name, policy_bytes)?;
         Ok(())
@@ -196,11 +216,50 @@ impl QueueManager {
     /// Publishes a message to the named queue. If `message.deliver_at` is set
     /// to a future timestamp, the message is stored in the scheduled tree and
     /// won't be visible to `consume` until `promote_scheduled` moves it to the
-    /// main tree. Errors if the queue doesn't exist or if the storage limit
-    /// would be exceeded.
-    pub fn publish(&mut self, queue: &str, message: Message) -> Result<(), PelicanError> {
+    /// main tree. If the queue has deduplication enabled and `message.dedup_key`
+    /// matches a key seen within the configured window, returns
+    /// `PublishOutcome::Deduplicated` without storing anything.
+    /// Errors if the queue doesn't exist or if the storage limit would be exceeded.
+    pub fn publish(
+        &mut self,
+        queue: &str,
+        message: Message,
+    ) -> Result<PublishOutcome, PelicanError> {
         if !self.meta_tree.contains_key(queue)? {
             return Err(PelicanError::QueueNotFound(queue.to_string()));
+        }
+
+        // Deduplication check
+        let policy: RetentionPolicy = self
+            .retention_tree
+            .get(queue)?
+            .and_then(|b| bincode::deserialize(&b).ok())
+            .unwrap_or_default();
+
+        if let Some(window_secs) = policy.dedup_window_secs {
+            if window_secs > 0 {
+                if let Some(ref dedup_key) = message.dedup_key {
+                    let dedup_tree = self.db.open_tree(Self::dedup_tree_name(queue))?;
+                    if let Some(recorded) = dedup_tree.get(dedup_key.as_bytes())? {
+                        let recorded_ms = i64::from_be_bytes(
+                            recorded[..8]
+                                .try_into()
+                                .map_err(|e: std::array::TryFromSliceError| {
+                                    PelicanError::Storage(sled::Error::Io(
+                                        std::io::Error::new(
+                                            std::io::ErrorKind::InvalidData,
+                                            e,
+                                        ),
+                                    ))
+                                })?,
+                        );
+                        let window_ms = (window_secs as i64) * 1000;
+                        if recorded_ms > Message::now_ms() - window_ms {
+                            return Ok(PublishOutcome::Deduplicated);
+                        }
+                    }
+                }
+            }
         }
 
         let value = bincode::serialize(&message)?;
@@ -220,6 +279,7 @@ impl QueueManager {
             }
         }
 
+        let stored = message.id;
         let id = self.db.generate_id()?;
 
         if let Some(deliver_at) = message.deliver_at {
@@ -228,7 +288,8 @@ impl QueueManager {
                 let key = Self::encode_scheduled_key(deliver_at, id);
                 scheduled.insert(key.as_slice(), value.as_slice())?;
                 self.current_bytes += msg_len;
-                return Ok(());
+                self.record_dedup_key(queue, &message, &policy)?;
+                return Ok(PublishOutcome::Stored(stored));
             }
         }
 
@@ -237,6 +298,27 @@ impl QueueManager {
         tree.insert(key.as_slice(), value.as_slice())?;
 
         self.current_bytes += msg_len;
+        self.record_dedup_key(queue, &message, &policy)?;
+        Ok(PublishOutcome::Stored(stored))
+    }
+
+    /// Records the message's `dedup_key` in the dedup index, if deduplication
+    /// is enabled and the message has a key.
+    fn record_dedup_key(
+        &self,
+        queue: &str,
+        message: &Message,
+        policy: &RetentionPolicy,
+    ) -> Result<(), PelicanError> {
+        if policy.dedup_window_secs.is_some() {
+            if let Some(ref dedup_key) = message.dedup_key {
+                let dedup_tree = self.db.open_tree(Self::dedup_tree_name(queue))?;
+                dedup_tree.insert(
+                    dedup_key.as_bytes(),
+                    &Message::now_ms().to_be_bytes(),
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -812,7 +894,7 @@ mod tests {
         with_manager(|mut mgr| {
             mgr.declare_queue_with_retention(
                 "q",
-                RetentionPolicy::new(None, Some(2), None),
+                RetentionPolicy::new(None, Some(2), None, None),
             )
             .unwrap();
 
@@ -840,7 +922,7 @@ mod tests {
         with_manager(|mut mgr| {
             mgr.declare_queue_with_retention(
                 "q",
-                RetentionPolicy::new(Some(0), None, None),
+                RetentionPolicy::new(Some(0), None, None, None),
             )
             .unwrap();
 
@@ -865,8 +947,9 @@ mod tests {
         loop {
             let payload = vec![b'x'; 32];
             match mgr.publish("q", Message::new(payload, std::collections::HashMap::new())) {
-                Ok(()) => count += 1,
+                Ok(PublishOutcome::Stored(_)) => count += 1,
                 Err(PelicanError::StorageLimitExceeded { .. }) => break,
+                Ok(PublishOutcome::Deduplicated) => panic!("unexpected dedup"),
                 Err(e) => panic!("unexpected error: {e}"),
             }
         }
@@ -895,7 +978,7 @@ mod tests {
         with_manager(|mut mgr| {
             mgr.declare_queue_with_retention(
                 "q",
-                RetentionPolicy::new(None, None, Some(5)),
+                RetentionPolicy::new(None, None, Some(5), None),
             )
             .unwrap();
 
@@ -917,7 +1000,7 @@ mod tests {
         with_manager(|mut mgr| {
             mgr.declare_queue_with_retention(
                 "dlq-test",
-                RetentionPolicy::new(None, None, Some(2)),
+                RetentionPolicy::new(None, None, Some(2), None),
             )
             .unwrap();
 
@@ -980,7 +1063,7 @@ mod tests {
             let mut mgr = QueueManager::open(dir.path(), None).unwrap();
             mgr.declare_queue_with_retention(
                 "q",
-                RetentionPolicy::new(None, None, Some(1)),
+                RetentionPolicy::new(None, None, Some(1), None),
             )
             .unwrap();
 
@@ -1287,6 +1370,134 @@ mod tests {
         with_manager(|mut mgr| {
             let err = mgr.promote_scheduled("nope");
             assert!(matches!(err, Err(PelicanError::QueueNotFound(_))));
+        });
+    }
+
+    // --- Phase 2, Step 5 acceptance tests (deduplication) ---
+
+    #[test]
+    fn test_dedup_rejects_duplicate_within_window() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue_with_retention(
+                "payments",
+                RetentionPolicy::new(None, None, None, Some(60)),
+            )
+            .unwrap();
+
+            let outcome1 = mgr.publish(
+                "payments",
+                Message::new(b"txn-1".to_vec(), std::collections::HashMap::new())
+                    .with_dedup_key("txn-123"),
+            )
+            .unwrap();
+            assert!(matches!(outcome1, PublishOutcome::Stored(_)));
+            assert_eq!(mgr.depth("payments").unwrap(), 1);
+
+            let outcome2 = mgr.publish(
+                "payments",
+                Message::new(b"txn-2".to_vec(), std::collections::HashMap::new())
+                    .with_dedup_key("txn-123"),
+            )
+            .unwrap();
+            assert_eq!(outcome2, PublishOutcome::Deduplicated);
+            assert_eq!(mgr.depth("payments").unwrap(), 1);
+        });
+    }
+
+    #[test]
+    fn test_dedup_no_key_always_stored() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue_with_retention(
+                "payments",
+                RetentionPolicy::new(None, None, None, Some(60)),
+            )
+            .unwrap();
+
+            let outcome1 = mgr.publish(
+                "payments",
+                Message::new(b"a".to_vec(), std::collections::HashMap::new()),
+            )
+            .unwrap();
+            assert!(matches!(outcome1, PublishOutcome::Stored(_)));
+
+            let outcome2 = mgr.publish(
+                "payments",
+                Message::new(b"b".to_vec(), std::collections::HashMap::new()),
+            )
+            .unwrap();
+            assert!(matches!(outcome2, PublishOutcome::Stored(_)));
+
+            assert_eq!(mgr.depth("payments").unwrap(), 2);
+        });
+    }
+
+    #[test]
+    fn test_dedup_disabled_stores_duplicates() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue_with_retention(
+                "logs",
+                RetentionPolicy::new(None, None, None, None),
+            )
+            .unwrap();
+
+            let outcome1 = mgr.publish(
+                "logs",
+                Message::new(b"x".to_vec(), std::collections::HashMap::new())
+                    .with_dedup_key("x"),
+            )
+            .unwrap();
+            assert!(matches!(outcome1, PublishOutcome::Stored(_)));
+
+            let outcome2 = mgr.publish(
+                "logs",
+                Message::new(b"x".to_vec(), std::collections::HashMap::new())
+                    .with_dedup_key("x"),
+            )
+            .unwrap();
+            assert!(matches!(outcome2, PublishOutcome::Stored(_)));
+
+            assert_eq!(mgr.depth("logs").unwrap(), 2);
+        });
+    }
+
+    #[test]
+    fn test_dedup_zero_window_never_blocks() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue_with_retention(
+                "events",
+                RetentionPolicy::new(None, None, None, Some(0)),
+            )
+            .unwrap();
+
+            let outcome1 = mgr.publish(
+                "events",
+                Message::new(b"a".to_vec(), std::collections::HashMap::new())
+                    .with_dedup_key("a"),
+            )
+            .unwrap();
+            assert!(matches!(outcome1, PublishOutcome::Stored(_)));
+
+            let outcome2 = mgr.publish(
+                "events",
+                Message::new(b"a".to_vec(), std::collections::HashMap::new())
+                    .with_dedup_key("a"),
+            )
+            .unwrap();
+            assert!(matches!(outcome2, PublishOutcome::Stored(_)));
+
+            assert_eq!(mgr.depth("events").unwrap(), 2);
+        });
+    }
+
+    #[test]
+    fn test_publish_returns_stored_uuid() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("q").unwrap();
+            let msg = Message::new(b"hello".to_vec(), std::collections::HashMap::new());
+            let msg_id = msg.id;
+
+            let outcome = mgr.publish("q", msg).unwrap();
+            assert_eq!(outcome, PublishOutcome::Stored(msg_id));
         });
     }
 }

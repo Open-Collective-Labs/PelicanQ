@@ -3,3 +3,5 @@ pub mod message;
 pub mod queue;
 pub mod retention;
 pub mod storage;
+
+pub use queue::PublishOutcome;

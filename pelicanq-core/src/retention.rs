@@ -9,6 +9,10 @@ pub struct RetentionPolicy {
     pub max_messages: Option<u64>,
     /// Maximum delivery attempts before routing to the dead-letter queue.
     pub max_delivery_attempts: Option<u32>,
+    /// If set, enables deduplication: publishes with a `dedup_key` matching one
+    /// seen within this many seconds are rejected (returns `Deduplicated`).
+    /// If `None`, deduplication is disabled (key is ignored).
+    pub dedup_window_secs: Option<u64>,
 }
 
 impl Default for RetentionPolicy {
@@ -18,6 +22,7 @@ impl Default for RetentionPolicy {
             max_age_secs: None,
             max_messages: None,
             max_delivery_attempts: None,
+            dedup_window_secs: None,
         }
     }
 }
@@ -27,11 +32,13 @@ impl RetentionPolicy {
         max_age_secs: Option<u64>,
         max_messages: Option<u64>,
         max_delivery_attempts: Option<u32>,
+        dedup_window_secs: Option<u64>,
     ) -> Self {
         Self {
             max_age_secs,
             max_messages,
             max_delivery_attempts,
+            dedup_window_secs,
         }
     }
 }
