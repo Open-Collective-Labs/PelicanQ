@@ -78,7 +78,7 @@ impl QueueManager {
         Ok(mgr)
     }
 
-    /// Recalculates the total byte count by summing all queue and inflight entries.
+    /// Recalculates the total byte count by summing all queue, inflight, and DLQ entries.
     fn recalculate_bytes(&self) -> Result<u64, PelicanError> {
         let mut total: u64 = 0;
         for name in self.list_queues() {
@@ -87,8 +87,13 @@ impl QueueManager {
                 let (_, value) = entry?;
                 total += value.len() as u64;
             }
-            let inflight = self.db.open_tree(format!("inflight:{}", &name))?;
+            let inflight = self.db.open_tree(Self::inflight_tree_name(&name))?;
             for entry in inflight.iter() {
+                let (_, value) = entry?;
+                total += value.len() as u64;
+            }
+            let dlq = self.db.open_tree(Self::dlq_tree_name(&name))?;
+            for entry in dlq.iter() {
                 let (_, value) = entry?;
                 total += value.len() as u64;
             }
@@ -128,6 +133,10 @@ impl QueueManager {
         format!("inflight:{}", name)
     }
 
+    fn dlq_tree_name(name: &str) -> String {
+        format!("dlq:{}", name)
+    }
+
     /// Creates a new empty queue. Errors if a queue with this name already exists.
     pub fn declare_queue(&mut self, name: &str) -> Result<(), PelicanError> {
         self.declare_queue_with_retention(name, RetentionPolicy::default())
@@ -145,6 +154,7 @@ impl QueueManager {
         self.meta_tree.insert(name, &[])?;
         self.db.open_tree(name)?;
         self.db.open_tree(Self::inflight_tree_name(name))?;
+        self.db.open_tree(Self::dlq_tree_name(name))?;
         let policy_bytes = bincode::serialize(&policy)?;
         self.retention_tree.insert(name, policy_bytes)?;
         Ok(())
@@ -261,28 +271,56 @@ impl QueueManager {
         }
     }
 
-    /// Moves a message from the in-flight store back to the end of the main queue.
+    /// Moves a message from the in-flight store back to the end of the main queue,
+    /// incrementing its delivery attempt counter. If the queue's retention policy
+    /// specifies `max_delivery_attempts` and the message has reached that threshold,
+    /// it is routed to the dead-letter queue (DLQ) instead of being requeued.
     pub fn nack(&mut self, queue: &str, delivery_tag: u64) -> Result<(), PelicanError> {
         if !self.meta_tree.contains_key(queue)? {
             return Err(PelicanError::QueueNotFound(queue.to_string()));
         }
 
+        let policy: RetentionPolicy = self
+            .retention_tree
+            .get(queue)?
+            .and_then(|b| bincode::deserialize(&b).ok())
+            .unwrap_or_default();
+
         let tree = self.db.open_tree(queue)?;
         let inflight = self.db.open_tree(Self::inflight_tree_name(queue))?;
+        let dlq_tree = self.db.open_tree(Self::dlq_tree_name(queue))?;
         let old_key = delivery_tag.to_be_bytes();
         let new_id = self.db.generate_id()?;
         let new_key = new_id.to_be_bytes();
 
+        let max_attempts = policy.max_delivery_attempts;
+
         let result: sled::transaction::TransactionResult<(), ()> =
-            (&inflight, &tree).transaction(|(tx_inflight, tx_tree)| {
-                match tx_inflight.remove(old_key.as_slice())? {
-                    Some(value) => {
-                        tx_tree.insert(new_key.as_slice(), value)?;
-                        Ok(())
+            (&inflight, &tree, &dlq_tree).transaction(
+                |(tx_inflight, tx_tree, tx_dlq)| {
+                    let value = tx_inflight
+                        .remove(old_key.as_slice())?
+                        .ok_or(ConflictableTransactionError::Abort(()))?;
+
+                    let mut msg: Message = bincode::deserialize(&value)
+                        .map_err(|_| ConflictableTransactionError::Abort(()))?;
+
+                    msg.delivery_attempts += 1;
+
+                    let new_value = bincode::serialize(&msg)
+                        .map_err(|_| ConflictableTransactionError::Abort(()))?;
+
+                    if let Some(max) = max_attempts {
+                        if max > 0 && msg.delivery_attempts >= max {
+                            tx_dlq.insert(new_key.as_slice(), new_value)?;
+                            return Ok(());
+                        }
                     }
-                    None => Err(ConflictableTransactionError::Abort(())),
-                }
-            });
+
+                    tx_tree.insert(new_key.as_slice(), new_value)?;
+                    Ok(())
+                },
+            );
 
         match result {
             Ok(()) => Ok(()),
@@ -293,6 +331,16 @@ impl QueueManager {
                 Err(PelicanError::Storage(e))
             }
         }
+    }
+
+    /// Returns the number of messages currently in the dead-letter queue for the
+    /// named queue. Errors if the queue doesn't exist.
+    pub fn dead_letter_count(&self, queue: &str) -> Result<usize, PelicanError> {
+        if !self.meta_tree.contains_key(queue)? {
+            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        }
+        let dlq = self.db.open_tree(Self::dlq_tree_name(queue))?;
+        Ok(dlq.len())
     }
 
     /// Returns the current depth of the named queue. Errors if the queue doesn't exist.
@@ -635,7 +683,7 @@ mod tests {
         with_manager(|mut mgr| {
             mgr.declare_queue_with_retention(
                 "q",
-                RetentionPolicy::new(None, Some(2)),
+                RetentionPolicy::new(None, Some(2), None),
             )
             .unwrap();
 
@@ -663,7 +711,7 @@ mod tests {
         with_manager(|mut mgr| {
             mgr.declare_queue_with_retention(
                 "q",
-                RetentionPolicy::new(Some(0), None),
+                RetentionPolicy::new(Some(0), None, None),
             )
             .unwrap();
 
@@ -709,5 +757,126 @@ mod tests {
             assert_eq!(removed, 0);
             assert_eq!(mgr.depth("q").unwrap(), 100);
         });
+    }
+
+    // --- Phase 2, Step 1 acceptance tests (delivery attempts & DLQ) ---
+
+    #[test]
+    fn test_delivery_attempt_increments_on_nack() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue_with_retention(
+                "q",
+                RetentionPolicy::new(None, None, Some(5)),
+            )
+            .unwrap();
+
+            mgr.publish("q", Message::new(b"msg".to_vec(), std::collections::HashMap::new()))
+                .unwrap();
+
+            let (tag, msg) = mgr.consume("q").unwrap().unwrap();
+            assert_eq!(msg.delivery_attempts, 0);
+
+            mgr.nack("q", tag).unwrap();
+
+            let (_, msg2) = mgr.consume("q").unwrap().unwrap();
+            assert_eq!(msg2.delivery_attempts, 1);
+        });
+    }
+
+    #[test]
+    fn test_nack_exceeds_max_delivery_attempts_routes_to_dlq() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue_with_retention(
+                "dlq-test",
+                RetentionPolicy::new(None, None, Some(2)),
+            )
+            .unwrap();
+
+            mgr.publish("dlq-test", Message::new(b"will-die".to_vec(), std::collections::HashMap::new()))
+                .unwrap();
+
+            // First consume + nack → delivery_attempts becomes 1, requeued
+            let (tag1, msg1) = mgr.consume("dlq-test").unwrap().unwrap();
+            assert_eq!(msg1.payload, b"will-die");
+            mgr.nack("dlq-test", tag1).unwrap();
+            assert_eq!(mgr.dead_letter_count("dlq-test").unwrap(), 0);
+
+            // Second consume + nack → delivery_attempts becomes 2, dead-lettered
+            let (tag2, msg2) = mgr.consume("dlq-test").unwrap().unwrap();
+            assert_eq!(msg2.payload, b"will-die");
+            mgr.nack("dlq-test", tag2).unwrap();
+
+            // Queue should now be empty
+            assert_eq!(mgr.depth("dlq-test").unwrap(), 0);
+            assert!(mgr.consume("dlq-test").unwrap().is_none());
+
+            // DLQ should have the message
+            assert_eq!(mgr.dead_letter_count("dlq-test").unwrap(), 1);
+        });
+    }
+
+    #[test]
+    fn test_nack_without_max_attempts_requeues_indefinitely() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("q").unwrap();
+
+            mgr.publish("q", Message::new(b"forever".to_vec(), std::collections::HashMap::new()))
+                .unwrap();
+
+            for _ in 0..5 {
+                let (tag, msg) = mgr.consume("q").unwrap().unwrap();
+                assert_eq!(msg.payload, b"forever");
+                mgr.nack("q", tag).unwrap();
+            }
+
+            // Message should still be in the queue after 5 nacks
+            assert_eq!(mgr.depth("q").unwrap(), 1);
+            assert_eq!(mgr.dead_letter_count("q").unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn test_dead_letter_count_on_nonexistent_queue() {
+        with_manager(|mgr| {
+            let err = mgr.dead_letter_count("nope");
+            assert!(matches!(err, Err(PelicanError::QueueNotFound(_))));
+        });
+    }
+
+    #[test]
+    fn test_dlq_persists_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+
+        {
+            let mut mgr = QueueManager::open(dir.path(), None).unwrap();
+            mgr.declare_queue_with_retention(
+                "q",
+                RetentionPolicy::new(None, None, Some(1)),
+            )
+            .unwrap();
+
+            mgr.publish("q", Message::new(b"persist-dlq".to_vec(), std::collections::HashMap::new()))
+                .unwrap();
+
+            let (tag, _) = mgr.consume("q").unwrap().unwrap();
+            mgr.nack("q", tag).unwrap();
+
+            assert_eq!(mgr.dead_letter_count("q").unwrap(), 1);
+        }
+
+        // Re-open — DLQ should still have the message
+        let mgr = QueueManager::open(dir.path(), None).unwrap();
+        assert_eq!(mgr.dead_letter_count("q").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_delivery_attempts_binary_backward_compat() {
+        // Verify that a freshly created message serializes/deserializes
+        // with delivery_attempts = 0.
+        let msg = Message::new(b"compat".to_vec(), std::collections::HashMap::new());
+        let bytes = bincode::serialize(&msg).unwrap();
+        let deserialized: Message = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(deserialized.delivery_attempts, 0);
+        assert_eq!(deserialized.payload, b"compat");
     }
 }

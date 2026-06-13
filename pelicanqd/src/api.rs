@@ -56,6 +56,9 @@ fn map_error(e: PelicanError) -> (StatusCode, Json<serde_json::Value>) {
         PelicanError::StorageLimitExceeded { .. } => {
             (StatusCode::PAYLOAD_TOO_LARGE, Json(body))
         }
+        PelicanError::MessageDeadLettered { .. } => {
+            (StatusCode::OK, Json(body))
+        }
         _ => {
             (StatusCode::INTERNAL_SERVER_ERROR, Json(body))
         }

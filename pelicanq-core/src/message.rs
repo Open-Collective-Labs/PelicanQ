@@ -11,6 +11,8 @@ pub struct Message {
     pub headers: HashMap<String, String>,
     /// Unix timestamp in milliseconds, set at creation time.
     pub timestamp: i64,
+    /// Number of times this message has been delivered and nacked.
+    pub delivery_attempts: u32,
 }
 
 impl Message {
@@ -21,6 +23,7 @@ impl Message {
             payload,
             headers,
             timestamp: Self::now_ms(),
+            delivery_attempts: 0,
         }
     }
 
@@ -46,5 +49,11 @@ mod tests {
     fn test_new_message_has_positive_timestamp() {
         let msg = Message::new(b"data".to_vec(), HashMap::new());
         assert!(msg.timestamp > 0);
+    }
+
+    #[test]
+    fn test_new_message_zero_delivery_attempts() {
+        let msg = Message::new(b"data".to_vec(), HashMap::new());
+        assert_eq!(msg.delivery_attempts, 0);
     }
 }
