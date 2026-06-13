@@ -10,6 +10,7 @@ use pelicanq_core::error::PelicanError;
 use pelicanq_core::message::DeliveryTag;
 use pelicanq_core::message::Message;
 use pelicanq_core::queue::QueueManager;
+use pelicanq_core::PublishOutcome;
 use serde::{Deserialize, Serialize};
 
 pub type AppState = Arc<Mutex<QueueManager>>;
@@ -118,9 +119,12 @@ async fn publish(
 
     let mut mgr = state.lock().unwrap();
     match mgr.publish(&name, message) {
-        Ok(()) => {
+        Ok(PublishOutcome::Stored(_)) => {
             let resp = serde_json::json!({"id": msg_id.to_string()});
             (StatusCode::CREATED, Json(resp))
+        }
+        Ok(PublishOutcome::Deduplicated) => {
+            (StatusCode::OK, Json(serde_json::json!({"status": "deduplicated"})))
         }
         Err(e) => map_error(e),
     }

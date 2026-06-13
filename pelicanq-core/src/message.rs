@@ -43,6 +43,10 @@ pub struct Message {
     /// If set, this message is not eligible for consumption until this unix
     /// timestamp (milliseconds). None means immediately eligible (default).
     pub deliver_at: Option<i64>,
+    /// Optional deduplication key. If the queue has deduplication enabled and a
+    /// message with the same `dedup_key` was published within the configured
+    /// window, this publish is a no-op (returns `PublishOutcome::Deduplicated`).
+    pub dedup_key: Option<String>,
 }
 
 impl Message {
@@ -56,6 +60,7 @@ impl Message {
             delivery_attempts: 0,
             priority: 0,
             deliver_at: None,
+            dedup_key: None,
         }
     }
 
@@ -69,6 +74,12 @@ impl Message {
     /// message is immediately eligible — validated at publish time.
     pub fn with_deliver_at(mut self, deliver_at_ms: i64) -> Self {
         self.deliver_at = Some(deliver_at_ms);
+        self
+    }
+
+    /// Sets an optional deduplication key.
+    pub fn with_dedup_key(mut self, key: impl Into<String>) -> Self {
+        self.dedup_key = Some(key.into());
         self
     }
 
@@ -157,5 +168,18 @@ mod tests {
         let msg = Message::new(b"data".to_vec(), HashMap::new())
             .with_deliver_at(999_999);
         assert_eq!(msg.deliver_at, Some(999_999));
+    }
+
+    #[test]
+    fn test_new_message_dedup_key_none() {
+        let msg = Message::new(b"data".to_vec(), HashMap::new());
+        assert_eq!(msg.dedup_key, None);
+    }
+
+    #[test]
+    fn test_with_dedup_key_sets_value() {
+        let msg = Message::new(b"data".to_vec(), HashMap::new())
+            .with_dedup_key("txn-123");
+        assert_eq!(msg.dedup_key, Some("txn-123".to_string()));
     }
 }
