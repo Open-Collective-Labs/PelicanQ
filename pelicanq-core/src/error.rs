@@ -1,3 +1,5 @@
+use crate::message::DeliveryTag;
+
 #[derive(Debug, thiserror::Error)]
 pub enum PelicanError {
     #[error("queue not found: {0}")]
@@ -13,7 +15,7 @@ pub enum PelicanError {
     Serialization(#[from] bincode::Error),
 
     #[error("invalid delivery tag: {0}")]
-    InvalidDeliveryTag(u64),
+    InvalidDeliveryTag(DeliveryTag),
 
     #[error("storage watermark exceeded: disk usage at {used_pct}%, limit is {limit_pct}%")]
     StorageLimitExceeded { used_pct: u8, limit_pct: u8 },

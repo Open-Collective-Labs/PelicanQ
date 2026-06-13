@@ -4,6 +4,7 @@ use sled::transaction::ConflictableTransactionError;
 use sled::Transactional;
 
 use crate::error::PelicanError;
+use crate::message::DeliveryTag;
 use crate::message::Message;
 use crate::retention::RetentionPolicy;
 
@@ -101,7 +102,8 @@ impl QueueManager {
         Ok(total)
     }
 
-    /// Moves all in-flight messages back to their respective queues (crash recovery).
+    /// Moves all in-flight messages back to their respective queues (crash recovery),
+    /// preserving message priority in the re-inserted keys.
     fn recover_inflight(&mut self) -> Result<(), PelicanError> {
         let names: Vec<String> = self.list_queues();
         for name in names {
@@ -118,8 +120,10 @@ impl QueueManager {
             }
 
             for (_key_bytes, value) in &entries {
+                let msg: Message = bincode::deserialize(value)?;
                 let new_id = self.db.generate_id()?;
-                tree.insert(new_id.to_be_bytes(), value.as_ref())?;
+                let new_key = Self::encode_key(msg.priority, new_id);
+                tree.insert(new_key.as_slice(), value.as_ref())?;
             }
 
             for (key_bytes, _) in &entries {
@@ -135,6 +139,15 @@ impl QueueManager {
 
     fn dlq_tree_name(name: &str) -> String {
         format!("dlq:{}", name)
+    }
+
+    /// Encodes a 9-byte storage key: 1 byte priority prefix so higher priority
+    /// sorts first, followed by 8 bytes big-endian id.
+    fn encode_key(priority: u8, id: u64) -> [u8; 9] {
+        let mut key = [0u8; 9];
+        key[0] = 9u8.saturating_sub(priority.min(9));
+        key[1..9].copy_from_slice(&id.to_be_bytes());
+        key
     }
 
     /// Creates a new empty queue. Errors if a queue with this name already exists.
@@ -186,16 +199,20 @@ impl QueueManager {
 
         let tree = self.db.open_tree(queue)?;
         let id = self.db.generate_id()?;
-        tree.insert(id.to_be_bytes(), value.as_slice())?;
+        let key = Self::encode_key(message.priority, id);
+        tree.insert(key.as_slice(), value.as_slice())?;
 
         self.current_bytes += msg_len;
         Ok(())
     }
 
-    /// Consumes the next message, moving it to the in-flight store.
-    /// Returns the message along with a delivery tag needed to ack/nack it.
-    /// Returns Ok(None) if the queue is empty.
-    pub fn consume(&mut self, queue: &str) -> Result<Option<(u64, Message)>, PelicanError> {
+    /// Consumes the next message (highest priority, oldest first), moving it to the
+    /// in-flight store. Returns the message along with a delivery tag needed to
+    /// ack/nack it. Returns Ok(None) if the queue is empty.
+    pub fn consume(
+        &mut self,
+        queue: &str,
+    ) -> Result<Option<(DeliveryTag, Message)>, PelicanError> {
         if !self.meta_tree.contains_key(queue)? {
             return Err(PelicanError::QueueNotFound(queue.to_string()));
         }
@@ -215,12 +232,23 @@ impl QueueManager {
                 None => return Ok(None),
             };
 
+            let id_bytes: [u8; 8] = key[1..9]
+                .try_into()
+                .map_err(|e: std::array::TryFromSliceError| {
+                    PelicanError::Storage(sled::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e,
+                    )))
+                })?;
+            let id = u64::from_be_bytes(id_bytes);
+
             let result: sled::transaction::TransactionResult<Vec<u8>, ()> =
                 (&tree, &inflight).transaction(|(tx_tree, tx_inflight)| {
                     match tx_tree.remove(key.as_slice())? {
                         Some(value) => {
                             let val_bytes = value.to_vec();
-                            tx_inflight.insert(key.as_slice(), value)?;
+                            // Inflight key is just the 8-byte id (no priority prefix)
+                            tx_inflight.insert(&id_bytes, value)?;
                             Ok(val_bytes)
                         }
                         None => Err(ConflictableTransactionError::Abort(())),
@@ -229,18 +257,8 @@ impl QueueManager {
 
             match result {
                 Ok(val_bytes) => {
-                    let tag = u64::from_be_bytes(
-                        key[..8]
-                            .try_into()
-                            .map_err(|e: std::array::TryFromSliceError| {
-                                sled::Error::Io(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    e,
-                                ))
-                            })?,
-                    );
                     let msg: Message = bincode::deserialize(&val_bytes)?;
-                    return Ok(Some((tag, msg)));
+                    return Ok(Some((DeliveryTag(id), msg)));
                 }
                 Err(sled::transaction::TransactionError::Abort(())) => {
                     // Key was taken between iter and transaction; retry with next key
@@ -254,13 +272,13 @@ impl QueueManager {
     }
 
     /// Permanently removes a message from the in-flight store.
-    pub fn ack(&mut self, queue: &str, delivery_tag: u64) -> Result<(), PelicanError> {
+    pub fn ack(&mut self, queue: &str, delivery_tag: DeliveryTag) -> Result<(), PelicanError> {
         if !self.meta_tree.contains_key(queue)? {
             return Err(PelicanError::QueueNotFound(queue.to_string()));
         }
 
         let inflight = self.db.open_tree(Self::inflight_tree_name(queue))?;
-        let key = delivery_tag.to_be_bytes();
+        let key = delivery_tag.0.to_be_bytes();
 
         match inflight.remove(key.as_slice())? {
             Some(value) => {
@@ -271,11 +289,17 @@ impl QueueManager {
         }
     }
 
-    /// Moves a message from the in-flight store back to the end of the main queue,
+    /// Moves a message from the in-flight store back to the main queue,
     /// incrementing its delivery attempt counter. If the queue's retention policy
     /// specifies `max_delivery_attempts` and the message has reached that threshold,
     /// it is routed to the dead-letter queue (DLQ) instead of being requeued.
-    pub fn nack(&mut self, queue: &str, delivery_tag: u64) -> Result<(), PelicanError> {
+    /// The re-inserted key is computed from the message's priority so that higher
+    /// priority messages are delivered first.
+    pub fn nack(
+        &mut self,
+        queue: &str,
+        delivery_tag: DeliveryTag,
+    ) -> Result<(), PelicanError> {
         if !self.meta_tree.contains_key(queue)? {
             return Err(PelicanError::QueueNotFound(queue.to_string()));
         }
@@ -289,9 +313,8 @@ impl QueueManager {
         let tree = self.db.open_tree(queue)?;
         let inflight = self.db.open_tree(Self::inflight_tree_name(queue))?;
         let dlq_tree = self.db.open_tree(Self::dlq_tree_name(queue))?;
-        let old_key = delivery_tag.to_be_bytes();
+        let old_key = delivery_tag.0.to_be_bytes();
         let new_id = self.db.generate_id()?;
-        let new_key = new_id.to_be_bytes();
 
         let max_attempts = policy.max_delivery_attempts;
 
@@ -309,6 +332,8 @@ impl QueueManager {
 
                     let new_value = bincode::serialize(&msg)
                         .map_err(|_| ConflictableTransactionError::Abort(()))?;
+
+                    let new_key = Self::encode_key(msg.priority, new_id);
 
                     if let Some(max) = max_attempts {
                         if max > 0 && msg.delivery_attempts >= max {
@@ -399,9 +424,8 @@ impl QueueManager {
                 let age_ms = now_ms - msg.timestamp;
                 if age_ms >= max_age_ms {
                     to_remove.push(key.to_vec());
-                } else {
-                    break;
                 }
+                // No early break — priority-based keys are not strictly chronological.
             }
 
             for key in &to_remove {
@@ -668,11 +692,11 @@ mod tests {
         with_manager(|mut mgr| {
             mgr.declare_queue("q").unwrap();
 
-            let err = mgr.ack("q", 999);
-            assert!(matches!(err, Err(PelicanError::InvalidDeliveryTag(999))));
+            let err = mgr.ack("q", DeliveryTag(999));
+            assert!(matches!(err, Err(PelicanError::InvalidDeliveryTag(_))));
 
-            let err = mgr.nack("q", 999);
-            assert!(matches!(err, Err(PelicanError::InvalidDeliveryTag(999))));
+            let err = mgr.nack("q", DeliveryTag(999));
+            assert!(matches!(err, Err(PelicanError::InvalidDeliveryTag(_))));
         });
     }
 
@@ -878,5 +902,159 @@ mod tests {
         let deserialized: Message = bincode::deserialize(&bytes).unwrap();
         assert_eq!(deserialized.delivery_attempts, 0);
         assert_eq!(deserialized.payload, b"compat");
+    }
+
+    // --- Phase 2, Step 3 acceptance tests (priority queues) ---
+
+    #[test]
+    fn test_priority_delivery_order() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("prio").unwrap();
+
+            // Publish A (priority 0), B (priority 5), C (priority 0)
+            mgr.publish(
+                "prio",
+                Message::new(b"A".to_vec(), std::collections::HashMap::new()),
+            )
+            .unwrap();
+            mgr.publish(
+                "prio",
+                Message::new(b"B".to_vec(), std::collections::HashMap::new())
+                    .with_priority(5),
+            )
+            .unwrap();
+            mgr.publish(
+                "prio",
+                Message::new(b"C".to_vec(), std::collections::HashMap::new()),
+            )
+            .unwrap();
+
+            // Consume 3 times → order is B, A, C
+            let (_, m1) = mgr.consume("prio").unwrap().unwrap();
+            let (_, m2) = mgr.consume("prio").unwrap().unwrap();
+            let (_, m3) = mgr.consume("prio").unwrap().unwrap();
+
+            assert_eq!(m1.payload, b"B");
+            assert_eq!(m2.payload, b"A");
+            assert_eq!(m3.payload, b"C");
+        });
+    }
+
+    #[test]
+    fn test_priority_clamped_to_9() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("clamp").unwrap();
+
+            mgr.publish(
+                "clamp",
+                Message::new(b"high".to_vec(), std::collections::HashMap::new())
+                    .with_priority(15),
+            )
+            .unwrap();
+            mgr.publish(
+                "clamp",
+                Message::new(b"low".to_vec(), std::collections::HashMap::new()),
+            )
+            .unwrap();
+
+            let (_, m1) = mgr.consume("clamp").unwrap().unwrap();
+            assert_eq!(m1.payload, b"high"); // priority 15 → stored as 9, delivered first
+        });
+    }
+
+    #[test]
+    fn test_priority_fifo_within_same_priority() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("fifo-prio").unwrap();
+
+            mgr.publish(
+                "fifo-prio",
+                Message::new(b"first".to_vec(), std::collections::HashMap::new())
+                    .with_priority(3),
+            )
+            .unwrap();
+            mgr.publish(
+                "fifo-prio",
+                Message::new(b"second".to_vec(), std::collections::HashMap::new())
+                    .with_priority(3),
+            )
+            .unwrap();
+
+            let (_, m1) = mgr.consume("fifo-prio").unwrap().unwrap();
+            let (_, m2) = mgr.consume("fifo-prio").unwrap().unwrap();
+
+            assert_eq!(m1.payload, b"first");
+            assert_eq!(m2.payload, b"second");
+        });
+    }
+
+    #[test]
+    fn test_delivery_tag_ack_round_trip_with_priority() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("prio-ack").unwrap();
+
+            mgr.publish(
+                "prio-ack",
+                Message::new(b"prio-msg".to_vec(), std::collections::HashMap::new())
+                    .with_priority(7),
+            )
+            .unwrap();
+
+            let (tag, msg) = mgr.consume("prio-ack").unwrap().unwrap();
+            assert_eq!(msg.payload, b"prio-msg");
+
+            mgr.ack("prio-ack", tag).unwrap();
+            assert_eq!(mgr.depth("prio-ack").unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn test_nack_preserves_priority() {
+        with_manager(|mut mgr| {
+            mgr.declare_queue("prio-nack").unwrap();
+
+            mgr.publish(
+                "prio-nack",
+                Message::new(b"urgent".to_vec(), std::collections::HashMap::new())
+                    .with_priority(9),
+            )
+            .unwrap();
+            mgr.publish(
+                "prio-nack",
+                Message::new(b"normal".to_vec(), std::collections::HashMap::new()),
+            )
+            .unwrap();
+
+            // Consume urgent, nack it
+            let (tag, m) = mgr.consume("prio-nack").unwrap().unwrap();
+            assert_eq!(m.payload, b"urgent");
+            mgr.nack("prio-nack", tag).unwrap();
+
+            // Should still get urgent first (priority preserved)
+            let (_, m_again) = mgr.consume("prio-nack").unwrap().unwrap();
+            assert_eq!(m_again.payload, b"urgent");
+        });
+    }
+
+    #[test]
+    fn test_priority_does_not_break_basic_fifo() {
+        // All priorities 0 (default) → same as Phase 1 FIFO
+        with_manager(|mut mgr| {
+            mgr.declare_queue("fifo").unwrap();
+
+            mgr.publish("fifo", Message::new(b"1".to_vec(), std::collections::HashMap::new()))
+                .unwrap();
+            mgr.publish("fifo", Message::new(b"2".to_vec(), std::collections::HashMap::new()))
+                .unwrap();
+            mgr.publish("fifo", Message::new(b"3".to_vec(), std::collections::HashMap::new()))
+                .unwrap();
+
+            let (_, m1) = mgr.consume("fifo").unwrap().unwrap();
+            let (_, m2) = mgr.consume("fifo").unwrap().unwrap();
+            let (_, m3) = mgr.consume("fifo").unwrap().unwrap();
+            assert_eq!(m1.payload, b"1");
+            assert_eq!(m2.payload, b"2");
+            assert_eq!(m3.payload, b"3");
+        });
     }
 }

@@ -7,6 +7,7 @@ use axum::response::IntoResponse;
 use axum::{Json, Router};
 use base64::Engine;
 use pelicanq_core::error::PelicanError;
+use pelicanq_core::message::DeliveryTag;
 use pelicanq_core::message::Message;
 use pelicanq_core::queue::QueueManager;
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,7 @@ struct PublishRequest {
 
 #[derive(Deserialize)]
 struct AckNackRequest {
-    delivery_tag: u64,
+    delivery_tag: DeliveryTag,
 }
 
 fn map_error(e: PelicanError) -> (StatusCode, Json<serde_json::Value>) {
