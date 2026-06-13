@@ -1,0 +1,6 @@
+/target
+/data
+*.swp
+*.swo
+*~
+.DS_Store
