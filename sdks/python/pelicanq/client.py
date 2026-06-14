@@ -181,3 +181,33 @@ class PelicanClient:
         except Exception as e:
             self._raise("health", e)
             raise
+
+    def cluster_status(self) -> dict:
+        try:
+            resp = self._admin.ClusterStatus(admin_pb2.ClusterStatusRequest())
+            return {
+                "self_id": resp.self_id,
+                "is_leader": resp.is_leader,
+                "current_leader_id": resp.current_leader_id if resp.HasField("current_leader_id") else None,
+                "members": [{"id": m.id, "raft_addr": m.raft_addr, "client_addr": m.client_addr} for m in resp.members],
+            }
+        except Exception as e:
+            self._raise("cluster_status", e)
+            raise
+
+    def consume_stream(self, queue: str):
+        """Returns a bidirectional stream for consuming messages.
+        
+        Usage:
+            stream = client.consume_stream("myqueue")
+            for delivery in stream:
+                print(delivery.message.payload)
+                client.ack("myqueue", delivery.delivery_tag)
+        """
+        try:
+            def request_iter():
+                yield queue_pb2.ConsumeStreamAck(queue=queue)
+            return self._queue.ConsumeStream(request_iter())
+        except Exception as e:
+            self._raise("consume_stream", e)
+            raise

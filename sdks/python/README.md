@@ -40,10 +40,38 @@ client.close()
 | `publish_batch(queue, messages)` | Publish multiple messages |
 | `consume(queue)` | Consume one message |
 | `consume_batch(queue, max)` | Consume up to `max` messages |
+| `consume_stream(queue)` | Bidirectional streaming consume |
 | `ack(queue, delivery_tag)` | Acknowledge a message |
 | `nack(queue, delivery_tag)` | Nack (requeue or dead-letter) |
 | `list_queues()` | List all queues |
 | `health()` | Check daemon health |
+| `cluster_status()` | Get cluster status (Flock mode) |
+
+## Types
+
+### ClientMessage
+
+```python
+class ClientMessage:
+    payload: bytes
+    headers: dict[str, str]
+    priority: int       # 0-9
+    deliver_at: int | None
+    dedup_key: str | None
+```
+
+Builder methods: `with_priority(p)`, `with_deliver_at(ms)`, `with_dedup_key(k)`, `with_header(k, v)`.
+
+### QueueOptions
+
+```python
+class QueueOptions:
+    max_age_secs: int | None
+    max_messages: int | None
+    max_delivery_attempts: int | None
+    dead_letter_queue: str | None
+    dedup_window_secs: int | None
+```
 
 ## Requirements
 
@@ -51,3 +79,10 @@ client.close()
 - `grpcio>=1.60`
 - `protobuf>=4.25`
 - A running PelicanQ daemon
+
+## Build & Test
+
+```bash
+pip install pytest
+python -m pytest tests/
+```
