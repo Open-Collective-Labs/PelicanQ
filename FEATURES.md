@@ -26,6 +26,7 @@ Multi-node Raft consensus, replication, leader election, failover. Suitable for 
 | gRPC Protocol | ✅ | Full gRPC API alongside HTTP — same engine, same data |
 | gRPC Streaming Consume | ✅ | Bidirectional streaming with ack/nack feedback |
 | Rust SDK | ✅ | Reference SDK with full API surface |
+| MQTT 3.1.1 Listener | ✅ | QoS 0/1, topic ↔ queue mapping, auto-declare |
 
 ## Protocol Ports
 
@@ -33,6 +34,7 @@ Multi-node Raft consensus, replication, leader election, failover. Suitable for 
 |---|---|---|---|
 | HTTP/REST | `PELICANQ_LISTEN_ADDR` | `127.0.0.1:7070` | `/health`, `/queues`, `/queues/:name`, `/queues/:name/publish`, `/queues/:name/consume`, `/queues/:name/ack`, `/queues/:name/nack`, `/cluster/status` |
 | gRPC | `PELICANQ_GRPC_ADDR` | `127.0.0.1:7072` | `QueueService` (9 RPCs), `AdminService` (2 RPCs) |
+| MQTT 3.1.1 | `PELICANQ_MQTT_ADDR` | `127.0.0.1:1883` | QoS 0/1 publish, subscribe, auto-declare |
 | Raft inter-node | Member config | Per-node | Internal Raft RPC traffic |
 
 ## API Surface
@@ -61,7 +63,7 @@ The Rust SDK (`sdks/rust/`) is the reference client implementation.
 
 ## Planned
 
-- AMQP-compatible wire protocol
+- AMQP 0-9-1 wire protocol
 - WebSocket streaming
 - OAuth2 / OIDC authentication
 - Role-based access control (RBAC)

@@ -1,0 +1,19 @@
+{
+  "name": "@pelicanq/client",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import tsx --test src/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.9",
+    "@grpc/proto-loader": "^0.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.3",
+    "tsx": "^4.7"
+  }
+}

@@ -10,6 +10,9 @@ pub struct Config {
     pub grpc_addr: String,
     /// Optional max bytes for storage watermark. Env: PELICANQ_MAX_BYTES. Default: None.
     pub max_bytes: Option<u64>,
+    /// MQTT listen address. Env: PELICANQ_MQTT_ADDR. Default: "127.0.0.1:1883".
+    /// Set to empty string to disable MQTT.
+    pub mqtt_addr: Option<String>,
     /// Cluster configuration. `None` means Solo mode (no Raft).
     pub cluster: Option<ClusterConfig>,
 }
@@ -28,6 +31,12 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok());
 
+        let mqtt_addr = match std::env::var("PELICANQ_MQTT_ADDR") {
+            Ok(v) if v.is_empty() => None,
+            Ok(v) => Some(v),
+            Err(_) => Some("127.0.0.1:1883".to_string()),
+        };
+
         let cluster = match ClusterConfig::from_env() {
             Ok(c) => c,
             Err(msg) => {
@@ -41,6 +50,7 @@ impl Config {
             listen_addr,
             grpc_addr,
             max_bytes,
+            mqtt_addr,
             cluster,
         }
     }
