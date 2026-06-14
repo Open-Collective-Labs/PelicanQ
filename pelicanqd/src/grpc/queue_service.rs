@@ -2,14 +2,15 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
-use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 use pelicanq_core::error::PelicanError;
 use pelicanq_core::message::Message as CoreMessage;
 use pelicanq_core::queue::PublishOutcome;
+use pelicanq_core::retention::RetentionPolicy;
 use pelicanq_raft::QueueOperation;
 use pelicanq_raft::QueueOperationResponse;
 use pelicanq_raft::WriteResult;
@@ -18,9 +19,9 @@ use crate::api::{AppEngine, SharedState};
 use crate::grpc::pb::queue_service_server::QueueService;
 use crate::grpc::pb::{
     self as proto, AckRequest, AckResponse, ConsumeBatchRequest, ConsumeBatchResponse,
-    ConsumeRequest, ConsumeResponse, ConsumeStreamAck, DeclareQueueRequest,
-    DeclareQueueResponse, ListQueuesRequest, ListQueuesResponse, NackRequest, NackResponse,
-    PublishBatchRequest, PublishBatchResponse, PublishRequest, PublishResponse,
+    ConsumeRequest, ConsumeResponse, ConsumeStreamAck, DeclareQueueRequest, DeclareQueueResponse,
+    ListQueuesRequest, ListQueuesResponse, NackRequest, NackResponse, PublishBatchRequest,
+    PublishBatchResponse, PublishRequest, PublishResponse,
 };
 
 fn pelican_error_to_status(e: PelicanError) -> Status {
@@ -74,6 +75,15 @@ fn proto_message_to_core(msg: &proto::Message) -> CoreMessage {
     }
 }
 
+fn declare_request_to_policy(req: &DeclareQueueRequest) -> RetentionPolicy {
+    RetentionPolicy {
+        max_age_secs: req.max_age_secs,
+        max_messages: req.max_messages,
+        max_delivery_attempts: req.max_delivery_attempts,
+        dedup_window_secs: req.dedup_window_secs,
+    }
+}
+
 async fn consume_one(
     engine: &AppEngine,
     queue: &str,
@@ -96,11 +106,7 @@ async fn consume_one(
     }
 }
 
-async fn handle_ack(
-    engine: &AppEngine,
-    queue: &str,
-    delivery_tag: u64,
-) -> Result<(), Status> {
+async fn handle_ack(engine: &AppEngine, queue: &str, delivery_tag: u64) -> Result<(), Status> {
     match engine {
         AppEngine::Solo(qm_arc) => {
             let mut mgr = qm_arc.lock().unwrap();
@@ -126,11 +132,7 @@ async fn handle_ack(
     }
 }
 
-async fn handle_nack(
-    engine: &AppEngine,
-    queue: &str,
-    delivery_tag: u64,
-) -> Result<(), Status> {
+async fn handle_nack(engine: &AppEngine, queue: &str, delivery_tag: u64) -> Result<(), Status> {
     match engine {
         AppEngine::Solo(qm_arc) => {
             let mut mgr = qm_arc.lock().unwrap();
@@ -176,11 +178,12 @@ impl QueueService for QueueServiceImpl {
         request: Request<DeclareQueueRequest>,
     ) -> Result<Response<DeclareQueueResponse>, Status> {
         let req = request.into_inner();
+        let policy = declare_request_to_policy(&req);
 
         match &self.state.engine {
             AppEngine::Solo(qm_arc) => {
                 let mut mgr = qm_arc.lock().unwrap();
-                match mgr.declare_queue(&req.name) {
+                match mgr.declare_queue_with_retention(&req.name, policy) {
                     Ok(()) => Ok(Response::new(DeclareQueueResponse { created: true })),
                     Err(PelicanError::QueueAlreadyExists { .. }) => {
                         Ok(Response::new(DeclareQueueResponse { created: false }))
@@ -191,7 +194,7 @@ impl QueueService for QueueServiceImpl {
             AppEngine::Flock(flock) => {
                 let op = QueueOperation::DeclareQueue {
                     name: req.name,
-                    policy: Default::default(),
+                    policy,
                 };
                 match flock.client_write(op).await {
                     WriteResult::Ok(QueueOperationResponse::DeclareQueue(Ok(()))) => {
@@ -223,10 +226,11 @@ impl QueueService for QueueServiceImpl {
                 let mut queues = Vec::with_capacity(names.len());
                 for name in names {
                     let depth = mgr.depth(&name).unwrap_or(0) as u64;
+                    let scheduled_depth = mgr.scheduled_depth(&name).unwrap_or(0) as u64;
                     queues.push(proto::QueueInfo {
                         name,
                         depth,
-                        scheduled_depth: 0,
+                        scheduled_depth,
                     });
                 }
                 queues
@@ -238,10 +242,11 @@ impl QueueService for QueueServiceImpl {
                         let mut queues = Vec::with_capacity(names.len());
                         for name in names {
                             let depth = mgr.depth(&name).unwrap_or(0) as u64;
+                            let scheduled_depth = mgr.scheduled_depth(&name).unwrap_or(0) as u64;
                             queues.push(proto::QueueInfo {
                                 name,
                                 depth,
-                                scheduled_depth: 0,
+                                scheduled_depth,
                             });
                         }
                         queues
@@ -258,7 +263,11 @@ impl QueueService for QueueServiceImpl {
         request: Request<PublishRequest>,
     ) -> Result<Response<PublishResponse>, Status> {
         let req = request.into_inner();
-        let msg = proto_message_to_core(&req.message.expect("message required"));
+        let msg = req
+            .message
+            .as_ref()
+            .map(proto_message_to_core)
+            .ok_or_else(|| Status::invalid_argument("message is required"))?;
 
         let response = match &self.state.engine {
             AppEngine::Solo(qm_arc) => {
@@ -281,9 +290,9 @@ impl QueueService for QueueServiceImpl {
                     message: msg,
                 };
                 match flock.client_write(op).await {
-                    WriteResult::Ok(QueueOperationResponse::Publish(Ok(PublishOutcome::Stored(
-                        id,
-                    )))) => PublishResponse {
+                    WriteResult::Ok(QueueOperationResponse::Publish(Ok(
+                        PublishOutcome::Stored(id),
+                    ))) => PublishResponse {
                         id: id.to_string(),
                         deduplicated: false,
                     },
@@ -312,11 +321,7 @@ impl QueueService for QueueServiceImpl {
         request: Request<PublishBatchRequest>,
     ) -> Result<Response<PublishBatchResponse>, Status> {
         let req = request.into_inner();
-        let messages: Vec<CoreMessage> = req
-            .messages
-            .iter()
-            .map(proto_message_to_core)
-            .collect();
+        let messages: Vec<CoreMessage> = req.messages.iter().map(proto_message_to_core).collect();
 
         let results = match &self.state.engine {
             AppEngine::Solo(qm_arc) => {
@@ -343,21 +348,19 @@ impl QueueService for QueueServiceImpl {
                     messages,
                 };
                 match flock.client_write(op).await {
-                    WriteResult::Ok(QueueOperationResponse::PublishBatch(Ok(outcomes))) => {
-                        outcomes
-                            .into_iter()
-                            .map(|outcome| match outcome {
-                                PublishOutcome::Stored(id) => PublishResponse {
-                                    id: id.to_string(),
-                                    deduplicated: false,
-                                },
-                                PublishOutcome::Deduplicated => PublishResponse {
-                                    id: String::new(),
-                                    deduplicated: true,
-                                },
-                            })
-                            .collect()
-                    }
+                    WriteResult::Ok(QueueOperationResponse::PublishBatch(Ok(outcomes))) => outcomes
+                        .into_iter()
+                        .map(|outcome| match outcome {
+                            PublishOutcome::Stored(id) => PublishResponse {
+                                id: id.to_string(),
+                                deduplicated: false,
+                            },
+                            PublishOutcome::Deduplicated => PublishResponse {
+                                id: String::new(),
+                                deduplicated: true,
+                            },
+                        })
+                        .collect(),
                     WriteResult::Ok(QueueOperationResponse::PublishBatch(Err(e))) => {
                         return Err(pelican_error_to_status(e))
                     }
@@ -393,9 +396,7 @@ impl QueueService for QueueServiceImpl {
                 }
             }
             AppEngine::Flock(flock) => {
-                let op = QueueOperation::Consume {
-                    queue: req.queue,
-                };
+                let op = QueueOperation::Consume { queue: req.queue };
                 match flock.client_write(op).await {
                     WriteResult::Ok(QueueOperationResponse::Consume(Ok(Some((tag, msg))))) => {
                         Ok(Response::new(ConsumeResponse {
@@ -549,10 +550,7 @@ impl QueueService for QueueServiceImpl {
         Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
     }
 
-    async fn ack(
-        &self,
-        request: Request<AckRequest>,
-    ) -> Result<Response<AckResponse>, Status> {
+    async fn ack(&self, request: Request<AckRequest>) -> Result<Response<AckResponse>, Status> {
         let req = request.into_inner();
 
         match &self.state.engine {
@@ -583,10 +581,7 @@ impl QueueService for QueueServiceImpl {
         }
     }
 
-    async fn nack(
-        &self,
-        request: Request<NackRequest>,
-    ) -> Result<Response<NackResponse>, Status> {
+    async fn nack(&self, request: Request<NackRequest>) -> Result<Response<NackResponse>, Status> {
         let req = request.into_inner();
 
         match &self.state.engine {
