@@ -1,17 +1,49 @@
-# PelicanQ
+<p align="center">
+  <img src="asset/asset.png" alt="PelicanQ" width="200"/>
+</p>
 
-**PelicanQ** is a distributed, crash-safe message queue built in Rust. It provides at-least-once delivery with FIFO ordering, embedded sled persistence, dual-protocol access (HTTP + gRPC), and Raft-based clustering for high availability.
+<h1 align="center">PelicanQ</h1>
 
-## Quick Start
+<p align="center">
+  <em>A distributed, crash-safe message queue built in Rust</em>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Open-Collective-Labs/PelicanQ/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"/>
+  </a>
+  <a href="https://github.com/Open-Collective-Labs/PelicanQ">
+    <img src="https://img.shields.io/github/v/tag/Open-Collective-Labs/PelicanQ?label=version" alt="Version"/>
+  </a>
+  <a href="https://github.com/Open-Collective-Labs/PelicanQ/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/Open-Collective-Labs/PelicanQ/ci.yml?branch=main" alt="CI"/>
+  </a>
+  <img src="https://img.shields.io/badge/language-Rust-orange.svg" alt="Language: Rust"/>
+  <img src="https://img.shields.io/badge/status-beta-yellow.svg" alt="Status: Beta"/>
+</p>
+
+<p align="center">
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-features">Features</a> •
+  <a href="#-sdks">SDKs</a> •
+  <a href="#-documentation">Docs</a> •
+  <a href="#-contributing">Contributing</a>
+</p>
+
+---
+
+PelicanQ provides at-least-once delivery with FIFO ordering, embedded sled persistence, dual-protocol access (HTTP + gRPC + MQTT), and Raft-based clustering for high availability.
+
+## 🔧 Quick Start
 
 ```bash
 # Build the workspace
 cargo build
 
-# Run the daemon (Solo mode — single node, no Raft)
+# Run the daemon (Solo mode)
 PELICANQ_DATA_DIR=./data cargo run --bin pelicanqd
 
-# In another terminal, use the Rust SDK example:
+# Use the Rust SDK example:
 cargo run -p rust-publish-consume -- http://127.0.0.1:7072
 
 # Or use the HTTP API directly:
@@ -22,41 +54,27 @@ curl -X POST http://127.0.0.1:7070/queues/myqueue/publish \
 curl -X POST http://127.0.0.1:7070/queues/myqueue/consume
 ```
 
-## Project Structure
+## ✨ Features
 
-| Directory | Description |
-|---|---|
-| `pelicanq-core/` | Core engine: message types, queues, persistence, delivery |
-| `pelicanqd/` | Daemon binary with HTTP and gRPC API |
-| `pelicanq-raft/` | Raft consensus layer (openraft) for clustered mode |
-| `sdks/rust/` | Rust client SDK (reference implementation) |
-| `pelicanctl/` | CLI tool for managing PelicanQ |
-| `proto/` | Canonical protobuf contracts (source of truth) |
-| `docs/` | Architecture, clustering, deployment, and roadmap |
-| `examples/` | Runnable examples per SDK |
-| `scripts/` | Dev/build/release helper scripts |
+| Category | Features |
+|----------|----------|
+| **Core** | FIFO queues, priority (0-9), at-least-once delivery, ack/nack, batch operations |
+| **Persistence** | Embedded sled storage, crash recovery, TTL/retention policies, storage watermarks |
+| **Reliability** | Dead-letter queues, message deduplication, delayed/scheduled messages |
+| **Protocols** | HTTP/REST, gRPC (including streaming consume), MQTT 3.1.1 |
+| **Clustering** | Raft consensus (openraft), leader election, failover, snapshot/restore |
 
-## Protocol Support
+## 📦 SDKs
 
-| Protocol | Port (default) | Status |
-|---|---|---|
-| **HTTP/REST** | `127.0.0.1:7070` | ✅ Complete — all operations |
-| **gRPC** | `127.0.0.1:7072` | ✅ Complete — all operations including streaming consume |
-| **MQTT 3.1.1** | `127.0.0.1:1883` | ✅ QoS 0/1, topic-to-queue mapping |
+| Language | Package | Version | Status |
+|----------|---------|---------|--------|
+| **Rust** | [`pelicanq`](sdks/rust/) | `0.1.0` | ✅ Reference |
+| **Go** | [`pelicanq`](sdks/go/) | `v0.1.0` | 🚧 In progress |
+| **Python** | [`pelicanq`](sdks/python/) | `0.1.0` | 🚧 In progress |
+| **Node.js** | [`pelicanq`](sdks/node/) | `0.1.0` | 🚧 In progress |
+| **Java** | [`pelicanq-client`](sdks/java/) | `0.1.0` | 🚧 In progress |
 
-All protocols serve the **same data** through the **same engine**. You can publish over HTTP and consume over gRPC, or vice versa.
-
-## SDKs
-
-| Language | Crate / Package | Status |
-|---|---|---|
-| **Rust** | `pelicanq` (`sdks/rust/`) | ✅ Reference implementation |
-| Go | `sdks/go/` | 🚧 In progress |
-| Python | `sdks/python/` | 🚧 In progress |
-| Node.js | `sdks/node/` | 🚧 In progress |
-| Java | `sdks/java/` | 🚧 In progress |
-
-## Documentation
+## 📚 Documentation
 
 | Section | Contents |
 |---------|----------|
@@ -67,9 +85,9 @@ All protocols serve the **same data** through the **same engine**. You can publi
 | [Reference](docs/reference/http-api.md) | HTTP API, gRPC API, proto spec, SDK docs |
 | [Development](docs/development/building.md) | Building from source, testing, contributing |
 | [Roadmap](docs/roadmap.md) | Completed, in-progress, and planned features |
-| [Features & Spec](FEATURES.md) | Full feature specification with status
+| [Features & Spec](FEATURES.md) | Full feature specification with status |
 
-## Maintain
+## 🛠 Maintain
 
 ```bash
 # Run all tests
@@ -85,13 +103,13 @@ cargo fmt --check
 cargo clippy --all-targets
 ```
 
-## Contribute
+## 🤝 Contributing
 
 We welcome contributions! See the [Contributing Guide](CONTRIBUTING.md) to get started.
 
 Small iterative PRs are preferred over large sweeping changes.
 
-## License
+## 📄 License
 
 MIT
 
