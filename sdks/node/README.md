@@ -1,6 +1,6 @@
 # PelicanQ Node.js SDK
 
-A Node.js client for [PelicanQ](https://github.com/Open-Collective-Labs/PelicanQ).
+A TypeScript client for [PelicanQ](https://github.com/Open-Collective-Labs/PelicanQ).
 
 ## Installation
 
@@ -11,71 +11,73 @@ npm install @pelicanq/client
 ## Quickstart
 
 ```typescript
-import { PelicanClient, createMessage, QueueOptions } from '@pelicanq/client';
+import { PelicanClient, createMessage } from '@pelicanq/client';
 
-async function main() {
-  const client = await PelicanClient.connect('127.0.0.1:7072');
+const client = await PelicanClient.connect('127.0.0.1:7072');
 
-  const created = await client.declareQueue('my-queue', {});
-  console.log('created:', created);
+await client.declareQueue('my-queue', {});
+const msg = createMessage(Buffer.from('Hello!')).withPriority(5);
+const result = await client.publish('my-queue', msg);
+console.log('published:', result.id);
 
-  const msg = createMessage(Buffer.from('Hello, PelicanQ!')).withPriority(5);
-  const result = await client.publish('my-queue', msg);
-  console.log('published:', result.id);
-
-  const delivery = await client.consume('my-queue');
-  if (delivery) {
-    console.log('got:', delivery.message.payload.toString());
-    await client.ack('my-queue', delivery.deliveryTag);
-  }
-
-  console.log('Done!');
+const delivery = await client.consume('my-queue');
+if (delivery) {
+  console.log('got:', delivery.message.payload.toString());
+  await client.ack('my-queue', delivery.deliveryTag);
 }
-
-main().catch(console.error);
 ```
 
 ## API
 
-| Method | Description |
-|--------|-------------|
-| `PelicanClient.connect(addr)` | Connect to a PelicanQ gRPC endpoint |
-| `declareQueue(name, opts)` | Create a queue (idempotent) |
-| `publish(queue, message)` | Publish a single message |
-| `publishBatch(queue, messages)` | Publish multiple messages |
-| `consume(queue)` | Consume one message |
-| `consumeBatch(queue, max)` | Consume up to `max` messages |
-| `ack(queue, deliveryTag)` | Acknowledge a message |
-| `nack(queue, deliveryTag)` | Nack (requeue or dead-letter) |
-| `listQueues()` | List all queues |
-| `health()` | Check daemon health |
+### Client
 
-## Types
+```typescript
+class PelicanClient {
+  static connect(addr: string): Promise<PelicanClient>;
 
-### ClientMessage
+  declareQueue(name: string, opts?: QueueOptions): Promise<boolean>;
+  publish(queue: string, msg: ClientMessage): Promise<PublishResult>;
+  publishBatch(queue: string, msgs: ClientMessage[]): Promise<PublishResult[]>;
+  consume(queue: string): Promise<Delivery | null>;
+  consumeBatch(queue: string, max: number): Promise<Delivery[]>;
+  ack(queue: string, deliveryTag: number): Promise<void>;
+  nack(queue: string, deliveryTag: number): Promise<void>;
+  listQueues(): Promise<QueueInfo[]>;
+  health(): Promise<string>;
+  clusterStatus(): Promise<Record<string, unknown>>;
+  consumeStream(queue: string, onMessage: (d: Delivery) => void, onError?: (err: Error) => void): Promise<void>;
+}
+```
+
+### Types
+
+#### ClientMessage
 
 ```typescript
 class ClientMessage {
   payload: Buffer;
   headers: Record<string, string>;
-  priority: number;     // 0–9
-  deliverAt?: number;
+  priority: number;       // 0-9, clamped
+  deliverAt?: number;     // ms since epoch
   dedupKey?: string;
+
+  constructor(payload: Buffer);
+  withPriority(p: number): this;
+  withDeliverAt(ms: number): this;
+  withDedupKey(key: string): this;
+  withHeader(k: string, v: string): this;
 }
+
+function createMessage(payload: Buffer): ClientMessage;
 ```
 
-Builder methods: `createMessage(payload)`, `.withPriority(p)`, `.withDeliverAt(ms)`, `.withDedupKey(k)`, `.withHeader(k, v)`.
-
-### QueueOptions
+#### Other Types
 
 ```typescript
-interface QueueOptions {
-  maxAgeSecs?: number;
-  maxMessages?: number;
-  maxDeliveryAttempts?: number;
-  deadLetterQueue?: string;
-  dedupWindowSecs?: number;
-}
+interface PublishResult { id: string; deduplicated: boolean; }
+interface Delivery { deliveryTag: number; message: ClientMessage; id: string; timestamp: number; deliveryAttempts: number; }
+interface QueueOptions { maxAgeSecs?: number; maxMessages?: number; maxDeliveryAttempts?: number; deadLetterQueue?: string; dedupWindowSecs?: number; }
+interface QueueInfo { name: string; depth: number; scheduledDepth: number; }
 ```
 
 ### Error Handling
@@ -85,4 +87,13 @@ All SDK methods throw `PelicanError` on failure.
 ## Requirements
 
 - Node.js 20+
-- A running PelicanQ daemon
+- TypeScript 5+
+- A running PelicanQ daemon (see repo root README)
+
+## Build & Test
+
+```bash
+npm install
+npm run build
+npm test
+```

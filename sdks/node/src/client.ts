@@ -239,7 +239,7 @@ export class PelicanClient {
     return res.queues.map(queueInfoFromProto);
   }
 
-  async health(): Promise<void> {
+  async health(): Promise<string> {
     const res = await promisify<{ status: string }>(
       this.adminClient,
       'health',
@@ -248,5 +248,50 @@ export class PelicanClient {
     if (res.status !== 'ok') {
       throw new PelicanError(`unhealthy: ${res.status}`);
     }
+    return res.status;
+  }
+
+  async clusterStatus(): Promise<Record<string, unknown>> {
+    return promisify<Record<string, unknown>>(
+      this.adminClient,
+      'clusterStatus',
+      {},
+    );
+  }
+
+  async consumeStream(
+    queue: string,
+    onMessage: (delivery: Delivery) => void,
+    onError?: (err: Error) => void,
+  ): Promise<void> {
+    const call = this.queueClient as Record<string, unknown>;
+    const stream = (call.consumeStream as (arg0: unknown) => grpc.ClientDuplexStream<unknown, unknown>)(
+      null,
+    );
+
+    stream.on('data', (data: Record<string, unknown>) => {
+      const delivery = deliveryFromProto(data);
+      onMessage(delivery);
+    });
+
+    stream.on('error', (err: Error) => {
+      if (onError) onError(err);
+    });
+
+    stream.write({ queue });
+  }
+
+  async sendStreamAck(
+    stream: grpc.ClientDuplexStream<unknown, unknown>,
+    deliveryTag: number,
+  ): Promise<void> {
+    stream.write({ deliveryTag });
+  }
+
+  async sendStreamNack(
+    stream: grpc.ClientDuplexStream<unknown, unknown>,
+    deliveryTag: number,
+  ): Promise<void> {
+    stream.write({ nackDeliveryTag: deliveryTag });
   }
 }
