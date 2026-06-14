@@ -18,6 +18,7 @@
 | Clustering | Sled-backed Raft log | ✅ |
 | Clustering | Cluster bootstrap | ✅ |
 | Protocols | gRPC server (9 RPCs + streaming) | ✅ |
+| Protocols | MQTT 3.1.1 listener (QoS 0/1) | ✅ |
 | SDKs | Rust SDK (reference) | ✅ |
 
 ## In Progress
@@ -27,7 +28,7 @@
 | SDKs | Go SDK | ❌ |
 | SDKs | Python SDK | ❌ |
 | SDKs | Node.js SDK | ❌ |
-| Protocols | AMQP-compatible wire protocol | ❌ |
+| Protocols | AMQP 0-9-1 wire protocol | ❌ |
 
 ## Planned
 

@@ -2,6 +2,7 @@ mod api;
 mod cluster_config;
 mod config;
 mod grpc;
+mod mqtt;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -105,7 +106,7 @@ async fn main() {
 
     let grpc_addr = cfg.grpc_addr.clone();
     let queue_svc = grpc::queue_service::QueueServiceImpl::new(state.clone());
-    let admin_svc = grpc::admin_service::AdminServiceImpl::new(state);
+    let admin_svc = grpc::admin_service::AdminServiceImpl::new(state.clone());
 
     let grpc_router = tonic::transport::Server::builder()
         .add_service(QueueServiceServer::new(queue_svc))
@@ -113,14 +114,17 @@ async fn main() {
 
     tracing::info!("gRPC server listening on {}", grpc_addr);
 
+    let http = axum::serve(http_listener, app);
+    let grpc = grpc_router.serve(grpc_addr.parse().expect("invalid gRPC address"));
+
     tokio::select! {
-        result = axum::serve(http_listener, app) => {
-            result.expect("HTTP server error");
-        }
-        result = grpc_router.serve(
-            grpc_addr.parse().expect("invalid gRPC address"),
-        ) => {
-            result.expect("gRPC server error");
-        }
+        result = http => { result.expect("HTTP server error"); }
+        result = grpc => { result.expect("gRPC server error"); }
+        result = async {
+            if let Some(ref mqtt_addr) = cfg.mqtt_addr {
+                mqtt::handler::listen(state.clone(), mqtt_addr.clone()).await;
+            }
+            Ok::<_, std::convert::Infallible>(())
+        } => { result.unwrap(); }
     }
 }
