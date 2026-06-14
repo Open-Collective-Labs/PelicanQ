@@ -1,23 +1,26 @@
 ---
-name: Feature request
-about: Suggest an idea for this project
-title: ''
+name: Feature Request
+about: Suggest an idea for improvement
+title: "[FEATURE] "
 labels: enhancement
 assignees: ''
+
 ---
 
-## Problem
+## Description
+A clear and concise description of what feature you'd like to see.
 
-What problem would this feature solve? What use case does it address?
+## Motivation
+Why would this feature be useful? What problem does it solve?
 
 ## Proposed Solution
-
-Describe the feature you'd like to see, including any API or configuration changes.
+Describe the ideal way this would work from a user perspective.
 
 ## Alternatives
+Have you considered any alternative solutions or features?
 
-What alternatives have you considered?
+## Use Case
+Describe a real-world scenario where this feature would be valuable.
 
 ## Additional Context
-
-Any relevant links, prior art, or examples from other message queue systems.
+Add any other context, mockups, or references here.

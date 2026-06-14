@@ -207,3 +207,7 @@ We follow [conventional commits](https://www.conventionalcommits.org/):
 - **Issues**: Open a GitHub issue for bugs or feature requests.
 - **Discussions**: Use GitHub Discussions for questions.
 - **Security**: Report vulnerabilities to the maintainers directly (see [SECURITY.md](SECURITY.md)).
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the MIT License.

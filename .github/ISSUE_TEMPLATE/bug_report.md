@@ -1,38 +1,38 @@
 ---
-name: Bug report
-about: Create a report to help us improve
-title: ''
+name: Bug Report
+about: Report a bug to help us improve
+title: "[BUG] "
 labels: bug
 assignees: ''
+
 ---
 
 ## Description
-
-A clear and concise description of the bug.
+A clear and concise description of what the bug is.
 
 ## Steps to Reproduce
-
-1. Start the daemon: `...`
-2. Publish a message: `...`
-3. Consume: `...`
-4. See error
+Steps to reproduce the behavior:
+1. ...
+2. ...
+3. ...
 
 ## Expected Behavior
-
-What you expected to happen.
+A clear and concise description of what you expected to happen.
 
 ## Actual Behavior
-
-What actually happened (logs, error messages, stack traces).
+What actually happened instead.
 
 ## Environment
+- OS: [e.g., Linux, macOS, Windows]
+- Rust version: [output of `rustc --version`]
+- PelicanQ version/commit: [if building from source]
+- Daemon mode: [Solo or Flock]
 
-- OS: [e.g. Linux 6.8, macOS 14.5]
-- Rust version: `rustc --version`
-- PelicanQ version/commit: `git rev-parse HEAD`
-- Deployment mode: Solo / Flock
-- Protocol used: HTTP / gRPC / MQTT
+## Logs
+If applicable, add daemon logs or error messages:
+```
+logs here
+```
 
 ## Additional Context
-
 Add any other context about the problem here.

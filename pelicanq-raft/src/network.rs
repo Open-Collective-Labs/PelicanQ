@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use axum::extract::State;
 use axum::routing::post;
 use axum::Json;
@@ -41,11 +43,16 @@ impl Client {
     fn new(addr: String) -> Self {
         Self {
             addr,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .connect_timeout(Duration::from_secs(3))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 
     /// POST JSON to a Raft endpoint and return the raw response body as text.
+    /// Requests are subject to a 5-second timeout to prevent indefinite blocking.
     async fn post_json_raw<Req>(&self, uri: &str, req: &Req) -> Result<String, NetworkError>
     where
         Req: serde::Serialize,

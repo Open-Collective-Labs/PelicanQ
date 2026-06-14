@@ -21,8 +21,10 @@ pub struct QueueSnapshot {
     pub messages: Vec<Message>,
     /// Messages in the scheduled tree, in arbitrary order.
     pub scheduled: Vec<Message>,
-    /// Messages in the in-flight tree.
-    pub inflight: Vec<Message>,
+    /// Messages in the in-flight tree with their delivery tags preserved.
+    /// Each tuple is (delivery_tag, message). Tags must be preserved to ensure
+    /// that clients' ack/nack operations target the correct messages after restore.
+    pub inflight: Vec<(u64, Message)>,
     /// Messages in the dead-letter queue.
     pub dead_letter: Vec<Message>,
 }
@@ -33,6 +35,8 @@ impl QueueManager {
     /// This is a read-only operation: the manager is borrowed immutably.
     /// Dedup trees are NOT included in the snapshot because dedup keys are
     /// ephemeral and re-created on publish.
+    /// In-flight messages are exported with their original delivery tags to
+    /// ensure ack/nack semantics survive snapshot restore.
     pub fn export_snapshot(&self) -> Result<QueueManagerSnapshot, crate::error::PelicanError> {
         use crate::error::PelicanError;
         let mut queues = BTreeMap::new();
@@ -77,11 +81,18 @@ impl QueueManager {
                 .open_tree(QueueManager::inflight_tree_name(&name))
                 .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             for entry in inflight_tree.iter() {
-                let (_, value) = entry
+                let (key, value) = entry
                     .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+                let tag = u64::from_be_bytes(
+                    key[..8]
+                        .try_into()
+                        .map_err(|e| PelicanError::Storage {
+                            message: format!("invalid inflight key format: {e}"),
+                        })?,
+                );
                 let msg: Message = bincode::deserialize(&value)
                     .map_err(|e| PelicanError::Serialization { message: e.to_string() })?;
-                inflight.push(msg);
+                inflight.push((tag, msg));
             }
 
             let mut dead_letter = Vec::new();
@@ -114,6 +125,8 @@ impl QueueManager {
 
     /// Restores state from a snapshot, writing all data into this manager's
     /// sled trees. The manager must be freshly opened (empty or discarded).
+    /// In-flight messages are restored with their original delivery tags to
+    /// preserve ack/nack semantics across snapshot restores.
     pub fn restore_from_snapshot(
         &mut self,
         snapshot: &QueueManagerSnapshot,
@@ -184,20 +197,19 @@ impl QueueManager {
                     .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             }
 
-            // Write in-flight messages.
+            // Write in-flight messages with preserved delivery tags.
             let inflight_tree = self
                 .db
                 .open_tree(Self::inflight_tree_name(name))
                 .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
-            for msg in &qs.inflight {
+            for (tag, msg) in &qs.inflight {
                 let value = bincode::serialize(msg)
                     .map_err(|e| PelicanError::Serialization { message: e.to_string() })?;
-                let id = self
-                    .db
-                    .generate_id()
-                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+                // Reuse the original delivery tag instead of generating a new one.
+                // This ensures that clients' subsequent ack/nack calls with the same tag
+                // will target the correct message after snapshot restore.
                 inflight_tree
-                    .insert(&id.to_be_bytes(), value)
+                    .insert(&tag.to_be_bytes(), value)
                     .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             }
 
