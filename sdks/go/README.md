@@ -1,11 +1,11 @@
 # PelicanQ Go SDK
 
-A Go client for [PelicanQ](https://github.com/anomalyco/pelicanq).
+A Go client for [PelicanQ](https://github.com/Open-Collective-Labs/PelicanQ).
 
 ## Installation
 
 ```go
-import "github.com/anomalyco/pelicanq/sdks/go/pelicanq"
+import "github.com/Open-Collective-Labs/PelicanQ/sdks/go/pelicanq"
 ```
 
 ## Quickstart
@@ -18,7 +18,7 @@ import (
     "fmt"
     "time"
 
-    "github.com/anomalyco/pelicanq/sdks/go/pelicanq"
+    "github.com/Open-Collective-Labs/PelicanQ/sdks/go/pelicanq"
 )
 
 func main() {

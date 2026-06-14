@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/anomalyco/pelicanq/sdks/go/pelicanq"
+	"github.com/Open-Collective-Labs/PelicanQ/sdks/go/pelicanq"
 )
 
 func main() {

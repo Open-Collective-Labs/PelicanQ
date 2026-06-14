@@ -1,6 +1,6 @@
 # PelicanQ Python SDK
 
-A Python client for [PelicanQ](https://github.com/anomalyco/pelicanq).
+A Python client for [PelicanQ](https://github.com/Open-Collective-Labs/PelicanQ).
 
 ## Installation
 

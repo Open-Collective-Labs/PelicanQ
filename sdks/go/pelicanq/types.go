@@ -3,7 +3,7 @@ package pelicanq
 import (
 	"time"
 
-	pbv1 "github.com/anomalyco/pelicanq/sdks/go/pelicanq/pb/v1"
+	pbv1 "github.com/Open-Collective-Labs/PelicanQ/sdks/go/pelicanq/pb/v1"
 )
 
 // ClientMessage is a builder for a message to publish.

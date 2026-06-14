@@ -15,9 +15,9 @@
 ### Proto generation
 ```bash
 protoc --proto_path=proto --go_out=sdks/go/pelicanq \
-  --go_opt=module=github.com/anomalyco/pelicanq/sdks/go/pelicanq \
+  --go_opt=module=github.com/Open-Collective-Labs/PelicanQ/sdks/go/pelicanq \
   --go-grpc_out=sdks/go/pelicanq \
-  --go-grpc_opt=module=github.com/anomalyco/pelicanq/sdks/go/pelicanq \
+  --go-grpc_opt=module=github.com/Open-Collective-Labs/PelicanQ/sdks/go/pelicanq \
   proto/pelicanq/v1/*.proto
 ```
 

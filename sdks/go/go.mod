@@ -1,4 +1,4 @@
-module github.com/anomalyco/pelicanq/sdks/go
+module github.com/Open-Collective-Labs/PelicanQ/sdks/go
 
 go 1.21
 
