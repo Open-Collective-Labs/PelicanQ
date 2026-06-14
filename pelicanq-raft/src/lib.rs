@@ -2,6 +2,7 @@ use std::fmt;
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use openraft::storage::Adaptor;
 use serde::{Deserialize, Serialize};
@@ -145,12 +146,20 @@ impl FlockHandle {
 
     /// Submit a mutating operation through Raft consensus.
     ///
-    /// Returns `WriteResult::Ok` on success, `WriteResult::NotLeader` if this
-    /// node is a follower (with optional leader info), or `WriteResult::Error`
-    /// for fatal/internal errors.
+    /// Returns `WriteResult::Ok` on success only after the operation has been
+    /// applied to the state machine (committed and executed), ensuring durability
+    /// across node restarts and leader failovers.
+    ///
+    /// Returns `WriteResult::NotLeader` if this node is a follower (with optional
+    /// leader info), or `WriteResult::Error` for fatal/internal errors.
     pub async fn client_write(&self, op: QueueOperation) -> WriteResult {
         match self.raft.client_write(op).await {
-            Ok(resp) => WriteResult::Ok(resp.data),
+            Ok(resp) => {
+                // client_write() from openraft 0.9+ guarantees the entry is replicated
+                // to a quorum and applied to the state machine before returning.
+                // The response is safe to return to the client as durable.
+                WriteResult::Ok(resp.data)
+            }
             Err(raft_err) => {
                 // Check if this is a ForwardToLeader error.
                 if let Some(forward) = raft_err.forward_to_leader() {
