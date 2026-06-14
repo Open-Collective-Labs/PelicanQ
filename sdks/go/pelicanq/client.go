@@ -164,3 +164,22 @@ func (c *PelicanClient) Health(ctx context.Context) error {
 	}
 	return nil
 }
+
+// ClusterStatus returns the cluster status from the daemon.
+func (c *PelicanClient) ClusterStatus(ctx context.Context) (*pbv1.ClusterStatusResponse, error) {
+	resp, err := c.admin.ClusterStatus(ctx, &pbv1.ClusterStatusRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("pelicanq: cluster_status: %w", err)
+	}
+	return resp, nil
+}
+
+// ConsumeStream opens a bidirectional streaming consume.
+// Returns a BidiStreamingClient for sending acks/nacks and receiving messages.
+func (c *PelicanClient) ConsumeStream(ctx context.Context) (pbv1.QueueService_ConsumeStreamClient, error) {
+	stream, err := c.queue.ConsumeStream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("pelicanq: consume_stream: %w", err)
+	}
+	return stream, nil
+}
