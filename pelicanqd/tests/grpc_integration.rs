@@ -13,6 +13,7 @@ use pelicanqd::grpc::pb::{
     self as pb, ConsumeRequest, ConsumeStreamAck, DeclareQueueRequest, HealthRequest,
     ListQueuesRequest, PublishRequest,
 };
+use tonic::Code;
 
 fn test_state() -> pelicanqd::api::SharedState {
     let dir = tempfile::tempdir().unwrap();
@@ -26,9 +27,7 @@ fn test_state() -> pelicanqd::api::SharedState {
 async fn start_grpc_server(
     state: pelicanqd::api::SharedState,
 ) -> (tokio::task::JoinHandle<()>, u16) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
 
     let queue_svc = pelicanqd::grpc::queue_service::QueueServiceImpl::new(state.clone());
@@ -42,9 +41,7 @@ async fn start_grpc_server(
             .add_service(
                 pelicanqd::grpc::pb::admin_service_server::AdminServiceServer::new(admin_svc),
             )
-            .serve_with_incoming(
-                tokio_stream::wrappers::TcpListenerStream::new(listener),
-            )
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
             .await
             .unwrap();
     });
@@ -89,7 +86,11 @@ async fn test_grpc_declare_queue_twice() {
         ..Default::default()
     };
 
-    let resp1 = client.declare_queue(req.clone()).await.unwrap().into_inner();
+    let resp1 = client
+        .declare_queue(req.clone())
+        .await
+        .unwrap()
+        .into_inner();
     assert!(resp1.created);
 
     let resp2 = client.declare_queue(req).await.unwrap().into_inner();
@@ -195,16 +196,112 @@ async fn test_grpc_list_queues() {
 }
 
 #[tokio::test]
+async fn test_grpc_declare_queue_applies_dedup_policy() {
+    let state = test_state();
+    let (_handle, port) = start_grpc_server(state).await;
+    let mut client = QueueServiceClient::new(grpc_channel(port).await);
+
+    client
+        .declare_queue(DeclareQueueRequest {
+            name: "dedup_q".to_string(),
+            dedup_window_secs: Some(60),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let mut msg = make_msg(b"hello");
+    msg.dedup_key = Some("same-key".to_string());
+    let first = client
+        .publish(PublishRequest {
+            queue: "dedup_q".to_string(),
+            message: Some(msg.clone()),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!first.deduplicated);
+
+    let second = client
+        .publish(PublishRequest {
+            queue: "dedup_q".to_string(),
+            message: Some(msg),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(second.deduplicated);
+}
+
+#[tokio::test]
+async fn test_grpc_list_queues_reports_scheduled_depth() {
+    let state = test_state();
+    let (_handle, port) = start_grpc_server(state).await;
+    let mut client = QueueServiceClient::new(grpc_channel(port).await);
+
+    client
+        .declare_queue(DeclareQueueRequest {
+            name: "scheduled_q".to_string(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let mut msg = make_msg(b"later");
+    msg.deliver_at = Some(9_999_999_999_999);
+    client
+        .publish(PublishRequest {
+            queue: "scheduled_q".to_string(),
+            message: Some(msg),
+        })
+        .await
+        .unwrap();
+
+    let resp = client
+        .list_queues(ListQueuesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    let queue = resp
+        .queues
+        .iter()
+        .find(|q| q.name == "scheduled_q")
+        .expect("scheduled_q is listed");
+    assert_eq!(queue.depth, 0);
+    assert_eq!(queue.scheduled_depth, 1);
+}
+
+#[tokio::test]
+async fn test_grpc_publish_without_message_returns_invalid_argument() {
+    let state = test_state();
+    let (_handle, port) = start_grpc_server(state).await;
+    let mut client = QueueServiceClient::new(grpc_channel(port).await);
+
+    client
+        .declare_queue(DeclareQueueRequest {
+            name: "invalid_q".to_string(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let err = client
+        .publish(PublishRequest {
+            queue: "invalid_q".to_string(),
+            message: None,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::InvalidArgument);
+}
+
+#[tokio::test]
 async fn test_grpc_health() {
     let state = test_state();
     let (_handle, port) = start_grpc_server(state).await;
     let mut client = AdminServiceClient::new(grpc_channel(port).await);
 
-    let resp = client
-        .health(HealthRequest {})
-        .await
-        .unwrap()
-        .into_inner();
+    let resp = client.health(HealthRequest {}).await.unwrap().into_inner();
     assert_eq!(resp.status, "ok");
 }
 

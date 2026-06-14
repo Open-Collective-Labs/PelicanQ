@@ -87,15 +87,41 @@ cargo build --release
 ### Test
 
 ```bash
-# Run all unit tests
+# Run all Rust unit and integration tests
 cargo test --workspace
 
-# Run integration tests (requires a running daemon)
+# Run core hot-path benchmarks (publish and publish/consume/ack)
+cargo test -p pelicanq-core --test queue_hot_path_benchmark -- --ignored --nocapture
+
+# Run integration tests that require a running daemon
 PELICANQ_INTEGRATION=1 cargo test --workspace -- --ignored
 
 # Run specific crate tests
 cargo test -p pelicanq-core
 ```
+
+### SDK checks
+
+Run the SDK checks before changing generated protobufs or client-facing behavior:
+
+```bash
+# Rust SDK
+cargo test -p pelicanq
+
+# Go SDK
+(cd sdks/go && go test ./...)
+
+# Python SDK
+(cd sdks/python && python3 -m pytest -q)
+
+# Node.js SDK
+(cd sdks/node && npm test && npm run build)
+
+# Java SDK
+(cd sdks/java && mvn test)
+```
+
+The Python integration test remains opt-in with `PELICANQ_INTEGRATION=1` because it needs a live daemon. The Java check needs Maven network access to resolve plugins and dependencies on a fresh machine.
 
 ### Run
 

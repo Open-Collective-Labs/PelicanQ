@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -21,9 +22,7 @@ fn find_daemon_bin() -> std::path::PathBuf {
             return p;
         }
     }
-    panic!(
-        "pelicanqd binary not found. Build it first with:\n  cargo build -p pelicanqd"
-    );
+    panic!("pelicanqd binary not found. Build it first with:\n  cargo build -p pelicanqd");
 }
 
 fn find_free_port() -> u16 {
@@ -32,7 +31,7 @@ fn find_free_port() -> u16 {
 }
 
 struct Daemon {
-    _child: Child,
+    child: Child,
     _data_dir: tempfile::TempDir,
     grpc_port: u16,
 }
@@ -43,7 +42,7 @@ impl Daemon {
         let grpc_port = find_free_port();
         let data_dir = tempfile::tempdir().unwrap();
 
-        let child = Command::new(&bin)
+        let mut child = Command::new(&bin)
             .env("PELICANQ_DATA_DIR", data_dir.path())
             .env(
                 "PELICANQ_LISTEN_ADDR",
@@ -51,14 +50,30 @@ impl Daemon {
             )
             .env("PELICANQ_GRPC_ADDR", format!("127.0.0.1:{}", grpc_port))
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .expect("failed to start pelicanqd");
 
-        std::thread::sleep(Duration::from_millis(500));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if std::net::TcpStream::connect(("127.0.0.1", grpc_port)).is_ok() {
+                break;
+            }
+            if let Some(status) = child.try_wait().expect("failed to poll pelicanqd") {
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                panic!("pelicanqd exited before gRPC was ready: {status}; stderr: {stderr}");
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("pelicanqd did not listen on gRPC port {grpc_port} within 5 seconds");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
 
         Self {
-            _child: child,
+            child,
             _data_dir: data_dir,
             grpc_port,
         }
@@ -69,9 +84,16 @@ impl Daemon {
     }
 }
 
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 #[tokio::test]
 async fn test_sdk_publish_consume_ack() {
-    let _guard = TEST_MUTEX.lock().unwrap();
+    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let daemon = Daemon::start();
 
     let mut client = PelicanClient::connect(daemon.grpc_addr()).await.unwrap();
@@ -103,7 +125,7 @@ async fn test_sdk_publish_consume_ack() {
 
 #[tokio::test]
 async fn test_sdk_declare_twice() {
-    let _guard = TEST_MUTEX.lock().unwrap();
+    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let daemon = Daemon::start();
 
     let mut client = PelicanClient::connect(daemon.grpc_addr()).await.unwrap();
@@ -123,7 +145,7 @@ async fn test_sdk_declare_twice() {
 
 #[tokio::test]
 async fn test_sdk_consume_empty() {
-    let _guard = TEST_MUTEX.lock().unwrap();
+    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let daemon = Daemon::start();
 
     let mut client = PelicanClient::connect(daemon.grpc_addr()).await.unwrap();
@@ -139,7 +161,7 @@ async fn test_sdk_consume_empty() {
 
 #[tokio::test]
 async fn test_sdk_publish_batch() {
-    let _guard = TEST_MUTEX.lock().unwrap();
+    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let daemon = Daemon::start();
 
     let mut client = PelicanClient::connect(daemon.grpc_addr()).await.unwrap();

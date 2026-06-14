@@ -2,7 +2,6 @@ use std::fmt;
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use openraft::storage::Adaptor;
 use serde::{Deserialize, Serialize};
