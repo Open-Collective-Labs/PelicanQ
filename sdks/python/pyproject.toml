@@ -13,4 +13,4 @@ dependencies = [
 ]
 
 [project.urls]
-Home = "https://github.com/anomalyco/pelicanq"
+Home = "https://github.com/Open-Collective-Labs/PelicanQ"

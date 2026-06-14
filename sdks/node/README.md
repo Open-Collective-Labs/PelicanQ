@@ -1,6 +1,6 @@
 # PelicanQ Node.js SDK
 
-A Node.js client for [PelicanQ](https://github.com/anomalyco/pelicanq).
+A Node.js client for [PelicanQ](https://github.com/Open-Collective-Labs/PelicanQ).
 
 ## Installation
 

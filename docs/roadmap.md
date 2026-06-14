@@ -2,45 +2,43 @@
 
 ## Completed
 
-| Area | Feature | Status |
-|---|---|---|
-| Core | Message & Queue primitives | ✅ |
-| Core | Sled persistence | ✅ |
-| Core | Crash-safe ack/nack | ✅ |
-| Core | Retention & watermarks | ✅ |
-| Daemon | HTTP API + `pelicanqd` binary | ✅ |
-| Reliability | DLQ ("The Nest") | ✅ |
-| Reliability | Delayed / scheduled messages | ✅ |
-| Reliability | Priority queues | ✅ |
-| Reliability | Deduplication | ✅ |
-| Reliability | Batch publish / consume | ✅ |
-| Clustering | Raft consensus, replication, failover | ✅ |
-| Clustering | Sled-backed Raft log | ✅ |
-| Clustering | Cluster bootstrap | ✅ |
-| Protocols | gRPC server (9 RPCs + streaming) | ✅ |
-| Protocols | MQTT 3.1.1 listener (QoS 0/1) | ✅ |
-| SDKs | Rust SDK (reference) | ✅ |
+- Core engine with FIFO ordering
+- Sled persistence
+- At-least-once delivery (ack/nack, crash recovery)
+- Retention policies (TTL, max count, max delivery attempts)
+- Dead-letter queues
+- Delayed/scheduled messages
+- Priority queues (0-9)
+- Message deduplication
+- Batch publish/consume
+- HTTP/REST API
+- gRPC API (11 RPCs including streaming consume)
+- MQTT 3.1.1 listener (QoS 0/1)
+- Raft clustering (openraft)
+- Rust SDK (reference)
+- Go SDK (code complete, needs verification)
+- Python SDK (code complete, needs verification)
+- Node.js SDK (code complete, build blocked on grpc-tools)
+- Java SDK (code complete, needs Maven + protoc)
 
 ## In Progress
 
-| Area | Feature | Status |
-|---|---|---|
-| SDKs | Go SDK | ❌ |
-| SDKs | Python SDK | ❌ |
-| SDKs | Node.js SDK | ❌ |
-| Protocols | AMQP 0-9-1 wire protocol | ❌ |
+- SDK build verification and CI integration
+- AMQP 0-9-1 wire protocol
+- CLI tool (`pelicanctl`)
 
 ## Planned
 
-| Area | Feature |
-|---|---|
-| Enterprise | OAuth2 / OIDC authentication |
-| Enterprise | Role-based access control (RBAC) |
-| Enterprise | Multi-tenancy with namespace isolation |
-| Enterprise | Encryption at rest |
-| Enterprise | Audit logging |
-| Operations | Web dashboard |
-| Operations | Prometheus / OpenTelemetry metrics |
-| Operations | Kubernetes operator + Helm chart |
-| Clustering | Dynamic membership changes |
-| Protocols | WebSocket streaming |
+- OAuth2 / OIDC authentication
+- Role-based access control (RBAC)
+- Multi-tenancy with namespace isolation
+- Encryption at rest
+- Audit logging
+- Web dashboard
+- Prometheus / OpenTelemetry metrics
+- Kubernetes operator + Helm chart
+- Dynamic Raft membership changes
+- WebSocket streaming
+- Cross-queue DLQ routing
+- Consumer groups
+- Publish/subscribe exchange model

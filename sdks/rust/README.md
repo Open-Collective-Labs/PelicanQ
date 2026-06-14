@@ -1,6 +1,6 @@
 # PelicanQ Rust SDK
 
-A minimal native Rust client for [PelicanQ](https://github.com/anomalyco/pelicanq).
+A minimal native Rust client for [PelicanQ](https://github.com/Open-Collective-Labs/PelicanQ).
 
 ## Quickstart
 

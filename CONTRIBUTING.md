@@ -1,154 +1,213 @@
 # Contributing to PelicanQ
 
-Thank you for your interest in contributing to PelicanQ! We welcome contributions of all kinds: bug fixes, feature implementations, documentation improvements, SDKs, and examples.
+Thanks for your interest in contributing! We welcome contributions of all kinds — bug reports, feature requests, documentation, tests, and code changes.
+
+## Table of Contents
+
+- [Code of Conduct](#code-of-conduct)
+- [Getting Started](#getting-started)
+- [How to Contribute](#how-to-contribute)
+  - [Reporting Bugs](#reporting-bugs)
+  - [Suggesting Features](#suggesting-features)
+  - [Improving Documentation](#improving-documentation)
+  - [Contributing Code](#contributing-code)
+- [Development Setup](#development-setup)
+- [Project Structure](#project-structure)
+- [Coding Standards](#coding-standards)
+- [Pull Request Process](#pull-request-process)
+- [Commit Messages](#commit-messages)
+- [Getting Help](#getting-help)
+
+## Code of Conduct
+
+This project adheres to the [Contributor Covenant](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to the maintainers.
 
 ## Getting Started
 
+1. Fork the repository.
+2. Clone your fork: `git clone https://github.com/<your-username>/PelicanQ.git`
+3. Add the upstream remote: `git remote add upstream https://github.com/Open-Collective-Labs/PelicanQ.git`
+4. Read the [README](README.md) and [documentation](docs/) to understand the project.
+
+## How to Contribute
+
+### Reporting Bugs
+
+Open a [bug report](.github/ISSUE_TEMPLATE/bug_report.md) with:
+
+- A clear title and description.
+- Steps to reproduce (code snippets, logs, config).
+- Expected vs actual behavior.
+- Environment details (OS, Rust version, PelicanQ version).
+
+### Suggesting Features
+
+Open a [feature request](.github/ISSUE_TEMPLATE/feature_request.md) with:
+
+- The problem you're trying to solve.
+- Proposed solution or API.
+- Alternatives you've considered.
+
+### Improving Documentation
+
+Documentation lives in `docs/` and the root `README.md`. We welcome:
+
+- Fixing typos or unclear sections.
+- Adding missing guides or examples.
+- Translating documentation.
+- Improving docstrings in Rust source files.
+
+### Contributing Code
+
+1. Pick an issue — comment to let others know you're working on it.
+2. Create a branch: `git checkout -b my-feature`.
+3. Make your changes (see [Development Setup](#development-setup)).
+4. Run tests: `cargo test --workspace`.
+5. Run linting: `cargo fmt --check && cargo clippy --all-targets`.
+6. Commit your changes (see [Commit Messages](#commit-messages)).
+7. Push to your fork and open a pull request.
+
+## Development Setup
+
 ### Prerequisites
-- Rust 1.75 or later
-- `protoc` (Protocol Buffers compiler) installed and in your `PATH`
-- `cargo` (comes with Rust)
 
-### Setup
+- **Rust**: Install via [rustup](https://rustup.rs/) (minimum version 1.75).
+- **Protoc** (optional, for gRPC codegen): Install via your package manager or from [protobuf releases](https://github.com/protocolbuffers/protobuf/releases).
+
+### Build
+
 ```bash
-# Clone the repository
-git clone https://github.com/Open-Collective-Labs/PelicanQ.git
-cd PelicanQ
-
 # Build the entire workspace
 cargo build
 
-# Run tests to verify your setup
-cargo test --workspace
-
-# Run the daemon locally
-PELICANQ_DATA_DIR=./data cargo run --bin pelicanqd
+# Build in release mode
+cargo build --release
 ```
 
-## Development Workflow
+### Test
 
-1. **Create a branch** from `main` with a descriptive name:
-   ```bash
-   git checkout -b feature/my-feature
-   # or
-   git checkout -b fix/issue-description
-   ```
+```bash
+# Run all unit tests
+cargo test --workspace
 
-2. **Make your changes** with focused, clear commits:
-   ```bash
-   git add <files>
-   git commit -m "Brief description of change"
-   ```
+# Run integration tests (requires a running daemon)
+PELICANQ_INTEGRATION=1 cargo test --workspace -- --ignored
 
-3. **Run quality checks** before pushing:
-   ```bash
-   # Format code
-   cargo fmt
+# Run specific crate tests
+cargo test -p pelicanq-core
+```
 
-   # Run tests
-   cargo test --workspace
+### Run
 
-   # Lint (clippy)
-   cargo clippy --all-targets
+```bash
+# Solo mode (single node)
+PELICANQ_DATA_DIR=./data cargo run --bin pelicanqd
 
-   # Check documentation
-   cargo doc --no-deps --open
-   ```
-
-4. **Push and open a Pull Request**:
-   - Describe what your change does and why
-   - Reference any related issues
-   - Keep PRs focused; smaller is better
-
-## What We're Looking For
-
-### High-Value Contributions
-- **SDKs**: Go, Python, Node.js, Java, Ruby (see [roadmap](docs/roadmap.md))
-- **Examples**: Real-world usage patterns and integrations
-- **Documentation**: Architecture clarifications, deployment guides, troubleshooting
-- **Performance**: Benchmarks, optimizations, profiling
-- **Testing**: Unit tests, integration tests, chaos testing
-- **Bug fixes**: Any reproducible issues
-
-### Code Standards
-- Follow Rust conventions (rustfmt formatting enforced)
-- Add tests for new functionality
-- Update documentation if behavior changes
-- Keep commits focused and messages clear
-- Avoid large sweeping refactors; discuss first
+# Flock mode (3-node cluster)
+./scripts/dev-cluster.sh
+```
 
 ## Project Structure
 
-| Directory | Purpose |
-|-----------|---------|
-| `pelicanq-core/` | Core engine: queues, persistence, delivery semantics |
-| `pelicanqd/` | HTTP + gRPC daemon |
-| `pelicanq-raft/` | Raft consensus layer (openraft-based) |
-| `sdks/rust/` | Rust client SDK (reference) |
-| `pelicanctl/` | CLI tool for cluster management |
-| `proto/` | Canonical protobuf contracts (source of truth) |
-| `docs/` | Architecture, clustering, deployment, roadmap |
-| `examples/` | Runnable examples |
-| `scripts/` | Build, test, release helpers |
-
-## Key Architectural Concepts
-
-- **At-least-once delivery**: Messages are retried until acknowledged
-- **FIFO ordering**: Within a queue, messages are processed in order
-- **Dual protocols**: HTTP/REST and gRPC serve the same core engine
-- **Embedded storage**: Built on sled (embedded B+ tree database)
-- **Raft clustering**: Multi-node high availability (Flock mode)
-
-See [Architecture](docs/architecture.md) and [Clustering](docs/clustering.md) for deeper details.
-
-## Roadmap & Issues
-
-Review the [roadmap](docs/roadmap.md) to see planned features and help prioritize your work. Open an issue **before** starting significant work to discuss approach and avoid duplicate effort.
-
-## Testing
-
-```bash
-# Unit and integration tests
-cargo test --workspace
-
-# Run specific test
-cargo test --package pelicanq-core queue_behavior
-
-# With logging (RUST_LOG=debug)
-RUST_LOG=debug cargo test --workspace -- --nocapture
 ```
+pelicanq/
+├── pelicanq-core/        # Core engine: queues, persistence, delivery
+├── pelicanqd/            # Daemon binary (HTTP + gRPC server)
+├── pelicanq-raft/        # Raft consensus layer
+├── proto/                # Canonical protobuf contracts
+├── sdks/                 # Client SDKs
+│   ├── rust/             #   Rust (reference implementation)
+│   ├── go/               #   Go
+│   ├── python/           #   Python
+│   ├── node/             #   Node.js / TypeScript
+│   └── java/             #   Java
+├── docs/                 # Documentation
+├── examples/             # Runnable examples per language
+├── scripts/              # Dev and CI scripts
+└── pelicanctl/           # CLI tool (in progress)
+```
+
+## Coding Standards
+
+### Rust
+
+- Format with `cargo fmt` (default rustfmt settings).
+- Lint with `cargo clippy --all-targets` — no warnings.
+- Follow standard Rust conventions (snake_case, `Result<T, E>`, etc.).
+- All public APIs must have doc comments.
+- Error types should implement `std::error::Error`.
+
+### Go
+
+- Format with `gofmt` (default settings).
+- Follow [Effective Go](https://go.dev/doc/effective_go) conventions.
+
+### Python
+
+- Follow [PEP 8](https://peps.python.org/pep-0008/).
+- Type hints required for all public APIs.
+
+### TypeScript / Node.js
+
+- Format with `prettier` (default settings).
+- Strict TypeScript mode required.
+
+### Java
+
+- Follow [Google Java Style](https://google.github.io/styleguide/javaguide.html).
+- Maven for build, JUnit 4 for tests.
+
+## Pull Request Process
+
+1. Ensure your PR references an existing issue (create one first if needed).
+2. Keep PRs focused — one feature or fix per PR.
+3. Update documentation and add tests for new functionality.
+4. Ensure CI passes (tests, linting, formatting).
+5. Squash commits before merging (see below).
+6. A maintainer will review your PR within a few days.
+
+### Before Submitting
+
+- [ ] Code compiles without warnings
+- [ ] Tests pass: `cargo test --workspace`
+- [ ] Linting passes: `cargo fmt --check && cargo clippy --all-targets`
+- [ ] Documentation is updated
+- [ ] Commit messages follow the guidelines
 
 ## Commit Messages
 
-Follow this pattern:
-```
-<type>(<scope>): <subject>
+We follow [conventional commits](https://www.conventionalcommits.org/):
 
-<body>
-
-<footer>
 ```
+<type>(<scope>): <description>
 
-Examples:
-```
-feat(core): add message TTL support
-fix(raft): handle network partition correctly
-docs: update clustering guide
-test(delivery): add redelivery scenario
+[optional body]
+
+[optional footer]
 ```
 
-Types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `chore`
+### Types
 
-## Questions?
+| Type | Usage | Example |
+|------|-------|---------|
+| `feat` | New feature | `feat(queue): add priority queue support` |
+| `fix` | Bug fix | `fix(raft): handle split-brain on partition recovery` |
+| `docs` | Documentation | `docs(api): add HTTP consume endpoint example` |
+| `test` | Tests | `test(core): add concurrency test for publish` |
+| `refactor` | Code change without feature/fix | `refactor(engine): extract retention logic` |
+| `perf` | Performance improvement | `perf(storage): batch sled writes` |
+| `chore` | Maintenance | `chore(deps): update tonic to 0.12` |
 
-- Check [docs/](docs/) for architecture and design decisions
-- Open a [Discussion](https://github.com/Open-Collective-Labs/PelicanQ/discussions) (when enabled)
-- Start an issue for design questions
+### Scope Examples
+
+`core`, `raft`, `grpc`, `http`, `mqtt`, `sdk/rust`, `sdk/go`, `docs`, `proto`
+
+## Getting Help
+
+- **Issues**: Open a GitHub issue for bugs or feature requests.
+- **Discussions**: Use GitHub Discussions for questions.
+- **Security**: Report vulnerabilities to the maintainers directly (see [SECURITY.md](SECURITY.md)).
 
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
-
----
-
-**Happy hacking! 🚀**

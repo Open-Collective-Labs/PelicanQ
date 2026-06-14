@@ -42,26 +42,32 @@ curl -X POST http://127.0.0.1:7070/queues/myqueue/consume
 |---|---|---|
 | **HTTP/REST** | `127.0.0.1:7070` | ✅ Complete — all operations |
 | **gRPC** | `127.0.0.1:7072` | ✅ Complete — all operations including streaming consume |
+| **MQTT 3.1.1** | `127.0.0.1:1883` | ✅ QoS 0/1, topic-to-queue mapping |
 
-Both protocols serve the **same data** through the **same engine**. You can publish over HTTP and consume over gRPC, or vice versa.
+All protocols serve the **same data** through the **same engine**. You can publish over HTTP and consume over gRPC, or vice versa.
 
 ## SDKs
 
 | Language | Crate / Package | Status |
 |---|---|---|
 | **Rust** | `pelicanq` (`sdks/rust/`) | ✅ Reference implementation |
-| Go | — | ❌ Planned |
-| Python | — | ❌ Planned |
-| Node.js | — | ❌ Planned |
-| Java | — | ❌ Planned |
+| Go | `sdks/go/` | 🚧 In progress |
+| Python | `sdks/python/` | 🚧 In progress |
+| Node.js | `sdks/node/` | 🚧 In progress |
+| Java | `sdks/java/` | 🚧 In progress |
 
 ## Documentation
 
-- [Features & Spec](FEATURES.md) — full feature specification
-- [Architecture](docs/architecture.md) — storage model, delivery semantics, retention, gRPC
-- [Clustering](docs/clustering.md) — Raft Flock mode configuration and operations
-- [Deployment Tiers](docs/deployment-tiers.md) — Solo vs Flock cluster modes
-- [Roadmap](docs/roadmap.md) — upcoming features and build plan
+| Section | Contents |
+|---------|----------|
+| [Getting Started](docs/getting-started/quickstart.md) | Quickstart, installation, configuration |
+| [Guides](docs/guides/publish-consume.md) | Publish/consume, batches, scheduling, priorities, dedup, DLQ, MQTT |
+| [Architecture](docs/architecture/overview.md) | System design, storage model, delivery semantics, retention, clustering |
+| [Deployment](docs/deployment/solo.md) | Solo mode, Flock cluster, configuration reference |
+| [Reference](docs/reference/http-api.md) | HTTP API, gRPC API, proto spec, SDK docs |
+| [Development](docs/development/building.md) | Building from source, testing, contributing |
+| [Roadmap](docs/roadmap.md) | Completed, in-progress, and planned features |
+| [Features & Spec](FEATURES.md) | Full feature specification with status
 
 ## Maintain
 
@@ -81,13 +87,14 @@ cargo clippy --all-targets
 
 ## Contribute
 
-1. Fork the repo and create a branch from `main`.
-2. Make your changes — keep commits focused and messages clear.
-3. Run tests and linting before opening a PR.
-4. Open a pull request describing the change and any relevant issues.
+We welcome contributions! See the [Contributing Guide](CONTRIBUTING.md) to get started.
 
-See the [roadmap](docs/roadmap.md) for planned work. Small iterative PRs are preferred over large sweeping changes.
+Small iterative PRs are preferred over large sweeping changes.
 
 ## License
 
 MIT
+
+---
+
+[Changelog](CHANGELOG.md) — [Contributing](CONTRIBUTING.md) — [Code of Conduct](CODE_OF_CONDUCT.md) — [Security](SECURITY.md)
