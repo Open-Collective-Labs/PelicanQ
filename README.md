@@ -23,18 +23,18 @@
 </p>
 
 <p align="center">
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="#-features">Features</a> •
-  <a href="#-sdks">SDKs</a> •
-  <a href="#-documentation">Docs</a> •
-  <a href="#-contributing">Contributing</a>
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#features">Features</a> •
+  <a href="#sdks">SDKs</a> •
+  <a href="#documentation">Docs</a> •
+  <a href="#contributing">Contributing</a>
 </p>
 
 ---
 
 PelicanQ provides at-least-once delivery with FIFO ordering, embedded sled persistence, dual-protocol access (HTTP + gRPC + MQTT), and Raft-based clustering for high availability.
 
-## 🔧 Quick Start
+## Quick Start
 
 ```bash
 # Build the workspace
@@ -54,7 +54,7 @@ curl -X POST http://127.0.0.1:7070/queues/myqueue/publish \
 curl -X POST http://127.0.0.1:7070/queues/myqueue/consume
 ```
 
-## ✨ Features
+## Features
 
 | Category | Features |
 |----------|----------|
@@ -64,17 +64,17 @@ curl -X POST http://127.0.0.1:7070/queues/myqueue/consume
 | **Protocols** | HTTP/REST, gRPC (including streaming consume), MQTT 3.1.1 |
 | **Clustering** | Raft consensus (openraft), leader election, failover, snapshot/restore |
 
-## 📦 SDKs
+## SDKs
 
 | Language | Package | Version | Status |
 |----------|---------|---------|--------|
-| **Rust** | [`pelicanq`](sdks/rust/) | `0.1.0` | ✅ Reference |
-| **Go** | [`pelicanq`](sdks/go/) | `v0.1.0` | 🚧 In progress |
-| **Python** | [`pelicanq`](sdks/python/) | `0.1.0` | 🚧 In progress |
-| **Node.js** | [`pelicanq`](sdks/node/) | `0.1.0` | 🚧 In progress |
-| **Java** | [`pelicanq-client`](sdks/java/) | `0.1.0` | 🚧 In progress |
+| **Rust** | [`pelicanq`](sdks/rust/) | `0.1.0` | Reference |
+| **Go** | [`pelicanq`](sdks/go/) | `v0.1.0` | In progress |
+| **Python** | [`pelicanq`](sdks/python/) | `0.1.0` | In progress |
+| **Node.js** | [`pelicanq`](sdks/node/) | `0.1.0` | In progress |
+| **Java** | [`pelicanq-client`](sdks/java/) | `0.1.0` | In progress |
 
-## 📚 Documentation
+## Documentation
 
 | Section | Contents |
 |---------|----------|
@@ -87,7 +87,7 @@ curl -X POST http://127.0.0.1:7070/queues/myqueue/consume
 | [Roadmap](docs/roadmap.md) | Completed, in-progress, and planned features |
 | [Features & Spec](FEATURES.md) | Full feature specification with status |
 
-## 🛠 Maintain
+## Maintain
 
 ```bash
 # Run all tests
@@ -103,13 +103,13 @@ cargo fmt --check
 cargo clippy --all-targets
 ```
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! See the [Contributing Guide](CONTRIBUTING.md) to get started.
 
 Small iterative PRs are preferred over large sweeping changes.
 
-## 📄 License
+## License
 
 MIT
 
