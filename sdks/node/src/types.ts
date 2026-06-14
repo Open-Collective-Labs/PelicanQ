@@ -69,3 +69,16 @@ export interface QueueInfo {
   depth: number;
   scheduledDepth: number;
 }
+
+export interface ClusterMember {
+  id: number;
+  raftAddr: string;
+  clientAddr: string;
+}
+
+export interface ClusterStatus {
+  selfId: number;
+  isLeader: boolean;
+  currentLeaderId?: number;
+  members: ClusterMember[];
+}

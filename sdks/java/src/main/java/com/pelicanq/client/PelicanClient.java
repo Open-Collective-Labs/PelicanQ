@@ -4,21 +4,22 @@ import com.pelicanq.client.types.*;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.StatusRuntimeException;
+import io.grpc.stub.StreamObserver;
 import java.io.Closeable;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class PelicanClient implements Closeable {
 
     private final ManagedChannel channel;
     private final pelicanq.v1.QueueServiceGrpc.QueueServiceBlockingStub blockingStub;
+    private final pelicanq.v1.QueueServiceGrpc.QueueServiceStub asyncStub;
     private final pelicanq.v1.AdminServiceGrpc.AdminServiceBlockingStub adminBlockingStub;
 
     PelicanClient(ManagedChannel channel) {
         this.channel = channel;
         this.blockingStub = pelicanq.v1.QueueServiceGrpc.newBlockingStub(channel);
+        this.asyncStub = pelicanq.v1.QueueServiceGrpc.newStub(channel);
         this.adminBlockingStub = pelicanq.v1.AdminServiceGrpc.newBlockingStub(channel);
     }
 
@@ -146,6 +147,49 @@ public class PelicanClient implements Closeable {
 
     public AsyncPelicanClient async() {
         return new AsyncPelicanClient(channel);
+    }
+
+    public ClusterStatus clusterStatus() throws PelicanException {
+        try {
+            pelicanq.v1.ClusterStatusResponse res = adminBlockingStub.clusterStatus(
+                pelicanq.v1.ClusterStatusRequest.newBuilder().build());
+            List<ClusterMember> members = res.getMembersList().stream()
+                .map(m -> new ClusterMember(m.getId(), m.getRaftAddr(), m.getClientAddr()))
+                .collect(Collectors.toList());
+            return new ClusterStatus(
+                res.getSelfId(),
+                res.getIsLeader(),
+                res.hasCurrentLeaderId() ? res.getCurrentLeaderId() : null,
+                members);
+        } catch (StatusRuntimeException e) {
+            throw new PelicanException("clusterStatus failed", e);
+        }
+    }
+
+    public StreamObserver<pelicanq.v1.ConsumeStreamAck> consumeStream(
+            String queue, StreamObserver<Delivery> observer) {
+        StreamObserver<pelicanq.v1.ConsumedMessage> protoObserver =
+                new StreamObserver<pelicanq.v1.ConsumedMessage>() {
+            @Override
+            public void onNext(pelicanq.v1.ConsumedMessage value) {
+                observer.onNext(toDelivery(value));
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                observer.onError(t);
+            }
+
+            @Override
+            public void onCompleted() {
+                observer.onCompleted();
+            }
+        };
+        StreamObserver<pelicanq.v1.ConsumeStreamAck> ackObserver =
+                asyncStub.consumeStream(protoObserver);
+        // Send initial message with queue name
+        ackObserver.onNext(pelicanq.v1.ConsumeStreamAck.newBuilder().setQueue(queue).build());
+        return ackObserver;
     }
 
     @Override

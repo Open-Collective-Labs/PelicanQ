@@ -134,4 +134,20 @@ public class AsyncPelicanClient {
         return toCompletableFuture(future)
             .thenApply(pelicanq.v1.HealthResponse::getStatus);
     }
+
+    public CompletableFuture<ClusterStatus> clusterStatus() {
+        ListenableFuture<pelicanq.v1.ClusterStatusResponse> future = adminFutureStub.clusterStatus(
+            pelicanq.v1.ClusterStatusRequest.newBuilder().build());
+        return toCompletableFuture(future)
+            .thenApply(res -> {
+                List<ClusterMember> members = res.getMembersList().stream()
+                    .map(m -> new ClusterMember(m.getId(), m.getRaftAddr(), m.getClientAddr()))
+                    .collect(Collectors.toList());
+                return new ClusterStatus(
+                    res.getSelfId(),
+                    res.getIsLeader(),
+                    res.hasCurrentLeaderId() ? res.getCurrentLeaderId() : null,
+                    members);
+            });
+    }
 }

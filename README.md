@@ -69,10 +69,10 @@ curl -X POST http://127.0.0.1:7070/queues/myqueue/consume
 | Language | Package | Version | Status |
 |----------|---------|---------|--------|
 | **Rust** | [`pelicanq`](sdks/rust/) | `0.1.0` | Reference |
-| **Go** | [`pelicanq`](sdks/go/) | `v0.1.0` | In progress |
-| **Python** | [`pelicanq`](sdks/python/) | `0.1.0` | In progress |
-| **Node.js** | [`pelicanq`](sdks/node/) | `0.1.0` | In progress |
-| **Java** | [`pelicanq-client`](sdks/java/) | `0.1.0` | In progress |
+| **Go** | [`pelicanq`](sdks/go/) | `v0.1.0` | Stable |
+| **Python** | [`pelicanq`](sdks/python/) | `0.1.0` | Stable |
+| **Node.js** | [`pelicanq`](sdks/node/) | `0.1.0` | Stable |
+| **Java** | [`pelicanq-client`](sdks/java/) | `0.1.0` | Stable |
 
 ## Documentation
 

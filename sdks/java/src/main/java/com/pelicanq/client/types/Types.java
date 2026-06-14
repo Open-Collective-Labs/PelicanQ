@@ -1,5 +1,6 @@
 package com.pelicanq.client.types;
 
+import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -193,4 +194,39 @@ public class PelicanException extends Exception {
     public PelicanException(String message, Throwable cause) {
         super(message, cause);
     }
+}
+
+public class ClusterMember {
+    private final long id;
+    private final String raftAddr;
+    private final String clientAddr;
+
+    public ClusterMember(long id, String raftAddr, String clientAddr) {
+        this.id = id;
+        this.raftAddr = raftAddr;
+        this.clientAddr = clientAddr;
+    }
+
+    public long getId() { return id; }
+    public String getRaftAddr() { return raftAddr; }
+    public String getClientAddr() { return clientAddr; }
+}
+
+public class ClusterStatus {
+    private final long selfId;
+    private final boolean isLeader;
+    private final Long currentLeaderId;
+    private final List<ClusterMember> members;
+
+    public ClusterStatus(long selfId, boolean isLeader, Long currentLeaderId, List<ClusterMember> members) {
+        this.selfId = selfId;
+        this.isLeader = isLeader;
+        this.currentLeaderId = currentLeaderId;
+        this.members = members;
+    }
+
+    public long getSelfId() { return selfId; }
+    public boolean isLeader() { return isLeader; }
+    public Long getCurrentLeaderId() { return currentLeaderId; }
+    public List<ClusterMember> getMembers() { return members; }
 }

@@ -165,21 +165,38 @@ func (c *PelicanClient) Health(ctx context.Context) error {
 	return nil
 }
 
-// ClusterStatus returns the cluster status from the daemon.
-func (c *PelicanClient) ClusterStatus(ctx context.Context) (*pbv1.ClusterStatusResponse, error) {
+// ClusterStatus returns information about the Raft cluster.
+func (c *PelicanClient) ClusterStatus(ctx context.Context) (ClusterStatus, error) {
 	resp, err := c.admin.ClusterStatus(ctx, &pbv1.ClusterStatusRequest{})
 	if err != nil {
-		return nil, fmt.Errorf("pelicanq: cluster_status: %w", err)
+		return ClusterStatus{}, fmt.Errorf("pelicanq: cluster_status: %w", err)
 	}
-	return resp, nil
+	members := make([]ClusterMember, len(resp.Members))
+	for i, m := range resp.Members {
+		members[i] = ClusterMember{
+			ID:         m.Id,
+			RaftAddr:   m.RaftAddr,
+			ClientAddr: m.ClientAddr,
+		}
+	}
+	return ClusterStatus{
+		SelfID:          resp.SelfId,
+		IsLeader:        resp.IsLeader,
+		CurrentLeaderID: resp.CurrentLeaderId,
+		Members:         members,
+	}, nil
 }
 
-// ConsumeStream opens a bidirectional streaming consume.
-// Returns a BidiStreamingClient for sending acks/nacks and receiving messages.
-func (c *PelicanClient) ConsumeStream(ctx context.Context) (pbv1.QueueService_ConsumeStreamClient, error) {
+// ConsumeStream opens a bidirectional streaming consume for the given queue.
+// Send the queue name as the initial message, then receive deliveries and send
+// ack/nack decisions. Call CloseSend when done.
+func (c *PelicanClient) ConsumeStream(ctx context.Context, queue string) (*ConsumeStreamClient, error) {
 	stream, err := c.queue.ConsumeStream(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("pelicanq: consume_stream: %w", err)
 	}
-	return stream, nil
+	if err := stream.Send(&pbv1.ConsumeStreamAck{Queue: &queue}); err != nil {
+		return nil, fmt.Errorf("pelicanq: consume_stream: send queue: %w", err)
+	}
+	return &ConsumeStreamClient{stream: stream}, nil
 }

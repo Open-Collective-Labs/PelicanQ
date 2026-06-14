@@ -29,7 +29,30 @@ if (delivery) {
 
 ## API
 
-### Client
+| Method | Description |
+|--------|-------------|
+| `PelicanClient.connect(addr)` | Connect to a PelicanQ gRPC endpoint |
+| `declareQueue(name, opts)` | Create a queue (idempotent) |
+| `publish(queue, message)` | Publish a single message |
+| `publishBatch(queue, messages)` | Publish multiple messages |
+| `consume(queue)` | Consume one message |
+| `consumeBatch(queue, max)` | Consume up to `max` messages |
+| `ack(queue, deliveryTag)` | Acknowledge a message |
+| `nack(queue, deliveryTag)` | Nack (requeue or dead-letter) |
+| `listQueues()` | List all queues |
+| `health()` | Check daemon health |
+| `clusterStatus()` | Get Raft cluster status |
+| `consumeStream(queue)` | Open a bidirectional streaming consume (returns `ClientDuplexStream`) |
+
+### Streaming Consume
+
+```typescript
+const stream = client.consumeStream('my-queue');
+stream.on('data', (msg: any) => {
+  console.log('got:', Buffer.from(msg.message.payload).toString());
+  stream.write({ deliveryTag: msg.deliveryTag }); // ack
+});
+```
 
 ```typescript
 class PelicanClient {

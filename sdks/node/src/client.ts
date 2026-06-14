@@ -4,6 +4,7 @@ import * as path from 'path';
 
 import {
   ClientMessage,
+  ClusterStatus,
   Delivery,
   PelicanError,
   PublishResult,
@@ -251,12 +252,23 @@ export class PelicanClient {
     return res.status;
   }
 
-  async clusterStatus(): Promise<Record<string, unknown>> {
-    return promisify<Record<string, unknown>>(
-      this.adminClient,
-      'clusterStatus',
-      {},
-    );
+  async clusterStatus(): Promise<ClusterStatus> {
+    const res = await promisify<{
+      selfId: number;
+      isLeader: boolean;
+      currentLeaderId?: number;
+      members: { id: number; raftAddr: string; clientAddr: string }[];
+    }>(this.adminClient, 'clusterStatus', {});
+    return {
+      selfId: res.selfId,
+      isLeader: res.isLeader,
+      currentLeaderId: res.currentLeaderId ?? undefined,
+      members: (res.members ?? []).map((m) => ({
+        id: m.id,
+        raftAddr: m.raftAddr,
+        clientAddr: m.clientAddr,
+      })),
+    };
   }
 
   async consumeStream(

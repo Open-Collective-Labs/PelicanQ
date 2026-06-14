@@ -56,12 +56,32 @@ func main() {
 | `PublishBatch(ctx, queue, msgs)` | Publish multiple messages |
 | `Consume(ctx, queue)` | Consume one message |
 | `ConsumeBatch(ctx, queue, max)` | Consume up to `max` messages |
-| `ConsumeStream(ctx)` | Open a bidirectional streaming consume |
+| `ConsumeStream(ctx, queue)` | Open a bidirectional streaming consume (returns `*ConsumeStreamClient`) |
 | `Ack(ctx, queue, tag)` | Acknowledge a message |
 | `Nack(ctx, queue, tag)` | Nack (requeue or dead-letter) |
 | `ListQueues(ctx)` | List all queues |
 | `Health(ctx)` | Check daemon health |
-| `ClusterStatus(ctx)` | Get cluster status (Flock mode) |
+| `ClusterStatus(ctx)` | Get Raft cluster status |
+
+### ClusterStatus
+
+```go
+status, _ := client.ClusterStatus(ctx)
+fmt.Printf("self=%d leader=%t members=%d\n", status.SelfID, status.IsLeader, len(status.Members))
+```
+
+### ConsumeStreamClient
+
+```go
+stream, _ := client.ConsumeStream(ctx, "q")
+defer stream.CloseSend()
+
+for {
+    d, err := stream.Recv()
+    if err == io.EOF { break }
+    stream.Ack(d.DeliveryTag)  // or stream.Nack(tag)
+}
+```
 
 ## Requirements
 

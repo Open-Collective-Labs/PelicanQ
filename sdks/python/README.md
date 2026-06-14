@@ -45,32 +45,23 @@ client.close()
 | `nack(queue, delivery_tag)` | Nack (requeue or dead-letter) |
 | `list_queues()` | List all queues |
 | `health()` | Check daemon health |
-| `cluster_status()` | Get cluster status (Flock mode) |
+| `cluster_status()` | Get Raft cluster status |
+| `consume_stream(queue)` | Open a bidirectional streaming consume (returns `_ConsumeStream` iterator) |
 
-## Types
-
-### ClientMessage
+### Cluster Status
 
 ```python
-class ClientMessage:
-    payload: bytes
-    headers: dict[str, str]
-    priority: int       # 0-9
-    deliver_at: int | None
-    dedup_key: str | None
+status = client.cluster_status()
+print(f"self={status['self_id']} leader={status['is_leader']}")
 ```
 
-Builder methods: `with_priority(p)`, `with_deliver_at(ms)`, `with_dedup_key(k)`, `with_header(k, v)`.
-
-### QueueOptions
+### Streaming Consume
 
 ```python
-class QueueOptions:
-    max_age_secs: int | None
-    max_messages: int | None
-    max_delivery_attempts: int | None
-    dead_letter_queue: str | None
-    dedup_window_secs: int | None
+stream = client.consume_stream("my_queue")
+for delivery in stream:
+    print(f"got: {delivery.message.payload}")
+    stream.ack(delivery.delivery_tag)   # or stream.nack(tag)
 ```
 
 ## Requirements

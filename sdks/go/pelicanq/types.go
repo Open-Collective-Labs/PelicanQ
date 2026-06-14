@@ -138,3 +138,49 @@ func queueInfoFromProto(qi *pbv1.QueueInfo) QueueInfo {
 func nowMillis() int64 {
 	return time.Now().UnixMilli()
 }
+
+// Cluster member information.
+type ClusterMember struct {
+	ID         uint64
+	RaftAddr   string
+	ClientAddr string
+}
+
+// ClusterStatus contains information about the Raft cluster.
+type ClusterStatus struct {
+	SelfID          uint64
+	IsLeader        bool
+	CurrentLeaderID *uint64
+	Members         []ClusterMember
+}
+
+// ConsumeStreamClient wraps the bidirectional stream for streaming consume.
+type ConsumeStreamClient struct {
+	stream pbv1.QueueService_ConsumeStreamClient
+}
+
+// Recv receives the next delivered message from the stream. Returns io.EOF when
+// the stream is closed by the server.
+func (c *ConsumeStreamClient) Recv() (*Delivery, error) {
+	cm, err := c.stream.Recv()
+	if err != nil {
+		return nil, err
+	}
+	d := deliveryFromProto(cm)
+	return &d, nil
+}
+
+// Ack sends an acknowledgement for the given delivery tag.
+func (c *ConsumeStreamClient) Ack(deliveryTag uint64) error {
+	return c.stream.Send(&pbv1.ConsumeStreamAck{DeliveryTag: &deliveryTag})
+}
+
+// Nack sends a negative acknowledgement for the given delivery tag.
+func (c *ConsumeStreamClient) Nack(deliveryTag uint64) error {
+	return c.stream.Send(&pbv1.ConsumeStreamAck{NackDeliveryTag: &deliveryTag})
+}
+
+// CloseSend signals to the server that no more acks/nacks will be sent.
+func (c *ConsumeStreamClient) CloseSend() error {
+	return c.stream.CloseSend()
+}

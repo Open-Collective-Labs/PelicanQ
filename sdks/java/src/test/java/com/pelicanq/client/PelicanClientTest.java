@@ -4,6 +4,8 @@ import com.pelicanq.client.types.*;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -138,5 +140,27 @@ public class PelicanClientTest {
         assertArrayEquals(original.getPayload(), copy.getPayload());
         assertEquals(original.getPriority(), copy.getPriority());
         assertEquals(original.getHeaders(), copy.getHeaders());
+    }
+
+    @Test
+    public void testClusterMember() {
+        ClusterMember m = new ClusterMember(1L, "10.0.0.1:7071", "10.0.0.1:7072");
+        assertEquals(1L, m.getId());
+        assertEquals("10.0.0.1:7071", m.getRaftAddr());
+        assertEquals("10.0.0.1:7072", m.getClientAddr());
+    }
+
+    @Test
+    public void testClusterStatus() {
+        List<ClusterMember> members = new ArrayList<>();
+        members.add(new ClusterMember(1L, "addr1", "addr2"));
+        ClusterStatus cs = new ClusterStatus(42L, true, null, members);
+        assertEquals(42L, cs.getSelfId());
+        assertTrue(cs.isLeader());
+        assertNull(cs.getCurrentLeaderId());
+        assertEquals(1, cs.getMembers().size());
+
+        ClusterStatus cs2 = new ClusterStatus(1L, false, 99L, new ArrayList<>());
+        assertEquals(Long.valueOf(99L), cs2.getCurrentLeaderId());
     }
 }

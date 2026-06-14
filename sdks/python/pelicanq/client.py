@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import queue as _queue
 import grpc
 
 from pelicanq.v1 import queue_pb2_grpc, queue_pb2, admin_pb2_grpc, admin_pb2, message_pb2
@@ -185,29 +186,69 @@ class PelicanClient:
     def cluster_status(self) -> dict:
         try:
             resp = self._admin.ClusterStatus(admin_pb2.ClusterStatusRequest())
+            members = [
+                {"id": m.id, "raft_addr": m.raft_addr, "client_addr": m.client_addr}
+                for m in resp.members
+            ]
             return {
                 "self_id": resp.self_id,
                 "is_leader": resp.is_leader,
                 "current_leader_id": resp.current_leader_id if resp.HasField("current_leader_id") else None,
-                "members": [{"id": m.id, "raft_addr": m.raft_addr, "client_addr": m.client_addr} for m in resp.members],
+                "members": members,
             }
         except Exception as e:
             self._raise("cluster_status", e)
             raise
 
-    def consume_stream(self, queue: str):
-        """Returns a bidirectional stream for consuming messages.
-        
-        Usage:
-            stream = client.consume_stream("myqueue")
-            for delivery in stream:
-                print(delivery.message.payload)
-                client.ack("myqueue", delivery.delivery_tag)
+    def consume_stream(self, queue: str) -> _ConsumeStream:
+        """Open a bidirectional streaming consume for the given queue.
+
+        Returns a _ConsumeStream iterator that yields Delivery objects.
+        Call ack(tag) / nack(tag) on the returned object while iterating.
         """
+        ack_queue: _queue.Queue = _queue.Queue()
+
+        def request_gen():
+            yield queue_pb2.ConsumeStreamAck(queue=queue)
+            while True:
+                ack = ack_queue.get()
+                yield ack
+
+        call = self._queue.ConsumeStream(request_gen())
+        return _ConsumeStream(call, ack_queue)
+
+
+class _ConsumeStream:
+    """Bidirectional streaming consume iterator.
+
+    Yields Delivery objects. Call ack(tag) / nack(tag) to send decisions
+    back to the server.
+    """
+
+    def __init__(self, call, ack_queue):
+        self._call = call
+        self._ack_queue = ack_queue
+        self._done = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> Delivery:
+        if self._done:
+            raise StopIteration
         try:
-            def request_iter():
-                yield queue_pb2.ConsumeStreamAck(queue=queue)
-            return self._queue.ConsumeStream(request_iter())
-        except Exception as e:
-            self._raise("consume_stream", e)
+            msg = next(self._call)
+            return _delivery_from_proto(msg)
+        except StopIteration:
+            self._done = True
             raise
+
+    def ack(self, delivery_tag: int) -> None:
+        self._ack_queue.put(queue_pb2.ConsumeStreamAck(delivery_tag=delivery_tag))
+
+    def nack(self, delivery_tag: int) -> None:
+        self._ack_queue.put(queue_pb2.ConsumeStreamAck(nack_delivery_tag=delivery_tag))
+
+    def close(self) -> None:
+        self._done = True
+        self._call.cancel()
