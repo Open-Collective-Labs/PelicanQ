@@ -16,6 +16,7 @@ package main
 import (
     "context"
     "fmt"
+    "log"
     "time"
 
     "github.com/Open-Collective-Labs/PelicanQ/sdks/go/pelicanq"
@@ -37,9 +38,10 @@ func main() {
     fmt.Println("published:", result.ID)
 
     d, _ := client.Consume(ctx, "q")
-    fmt.Println("got:", string(d.Message.Payload))
-
-    client.Ack(ctx, "q", d.DeliveryTag)
+    if d != nil {
+        fmt.Println("got:", string(d.Message.Payload))
+        client.Ack(ctx, "q", d.DeliveryTag)
+    }
 }
 ```
 
@@ -48,15 +50,18 @@ func main() {
 | Method | Description |
 |--------|-------------|
 | `Connect(addr)` | Connect to a PelicanQ gRPC endpoint |
+| `Close()` | Close the connection |
 | `DeclareQueue(ctx, name, opts)` | Create a queue (idempotent) |
 | `Publish(ctx, queue, msg)` | Publish a single message |
 | `PublishBatch(ctx, queue, msgs)` | Publish multiple messages |
 | `Consume(ctx, queue)` | Consume one message |
 | `ConsumeBatch(ctx, queue, max)` | Consume up to `max` messages |
+| `ConsumeStream(ctx)` | Open a bidirectional streaming consume |
 | `Ack(ctx, queue, tag)` | Acknowledge a message |
 | `Nack(ctx, queue, tag)` | Nack (requeue or dead-letter) |
 | `ListQueues(ctx)` | List all queues |
 | `Health(ctx)` | Check daemon health |
+| `ClusterStatus(ctx)` | Get cluster status (Flock mode) |
 
 ## Requirements
 
@@ -94,3 +99,11 @@ type QueueOptions struct {
 ### Error Handling
 
 All SDK methods return `(result, error)`. Check the error to detect failures.
+
+## Build & Test
+
+```bash
+go build ./...
+go vet ./...
+go test ./pelicanq/...
+```
