@@ -1,0 +1,92 @@
+syntax = "proto3";
+package pelicanq.v1;
+import "pelicanq/v1/message.proto";
+
+service QueueService {
+    rpc DeclareQueue (DeclareQueueRequest) returns (DeclareQueueResponse);
+    rpc ListQueues (ListQueuesRequest) returns (ListQueuesResponse);
+
+    rpc Publish (PublishRequest) returns (PublishResponse);
+    rpc PublishBatch (PublishBatchRequest) returns (PublishBatchResponse);
+
+    rpc Consume (ConsumeRequest) returns (ConsumeResponse);
+    rpc ConsumeBatch (ConsumeBatchRequest) returns (ConsumeBatchResponse);
+    // Streaming consume: server streams messages to the client as they arrive.
+    // Client sends ack/nack on the return stream. Implemented in Phase 4 Step 2.
+    rpc ConsumeStream (stream ConsumeStreamAck) returns (stream ConsumedMessage);
+
+    rpc Ack (AckRequest) returns (AckResponse);
+    rpc Nack (NackRequest) returns (NackResponse);
+}
+
+message DeclareQueueRequest {
+    string name = 1;
+    optional uint64 max_age_secs = 2;
+    optional uint64 max_messages = 3;
+    optional uint32 max_delivery_attempts = 4;
+    optional string dead_letter_queue = 5;
+    optional uint64 dedup_window_secs = 6;
+}
+message DeclareQueueResponse {
+    bool created = 1;
+}
+
+message ListQueuesRequest {}
+message ListQueuesResponse {
+    repeated QueueInfo queues = 1;
+}
+message QueueInfo {
+    string name = 1;
+    uint64 depth = 2;
+    uint64 scheduled_depth = 3;
+}
+
+message PublishRequest {
+    string queue = 1;
+    Message message = 2;
+}
+message PublishResponse {
+    string id = 1;
+    bool deduplicated = 2;
+}
+
+message PublishBatchRequest {
+    string queue = 1;
+    repeated Message messages = 2;
+}
+message PublishBatchResponse {
+    repeated PublishResponse results = 1;
+}
+
+message ConsumeRequest {
+    string queue = 1;
+}
+message ConsumeResponse {
+    optional ConsumedMessage message = 1;
+}
+
+message ConsumeBatchRequest {
+    string queue = 1;
+    uint32 max = 2;
+}
+message ConsumeBatchResponse {
+    repeated ConsumedMessage messages = 1;
+}
+
+message ConsumeStreamAck {
+    optional uint64 delivery_tag = 1;
+    optional uint64 nack_delivery_tag = 2;
+    optional string queue = 3;
+}
+
+message AckRequest {
+    string queue = 1;
+    uint64 delivery_tag = 2;
+}
+message AckResponse {}
+
+message NackRequest {
+    string queue = 1;
+    uint64 delivery_tag = 2;
+}
+message NackResponse {}

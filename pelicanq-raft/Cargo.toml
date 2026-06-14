@@ -1,0 +1,21 @@
+[package]
+name = "pelicanq-raft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+openraft = { version = "0.9", features = ["serde"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+axum = "0.7"
+reqwest = { version = "0.11", features = ["json"] }
+tracing = "0.1"
+futures = "0.3"
+pelicanq-core = { path = "../pelicanq-core" }
+sled = "0.34"
+
+[dev-dependencies]
+tempfile = "3"
+tracing-subscriber = "0.3"

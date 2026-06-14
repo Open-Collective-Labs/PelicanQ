@@ -1,0 +1,26 @@
+syntax = "proto3";
+package pelicanq.v1;
+
+service AdminService {
+    rpc Health (HealthRequest) returns (HealthResponse);
+    rpc ClusterStatus (ClusterStatusRequest) returns (ClusterStatusResponse);
+}
+
+message HealthRequest {}
+message HealthResponse {
+    string status = 1;
+}
+
+message ClusterStatusRequest {}
+message ClusterStatusResponse {
+    uint64 self_id = 1;
+    bool is_leader = 2;
+    optional uint64 current_leader_id = 3;
+    repeated ClusterMember members = 4;
+}
+
+message ClusterMember {
+    uint64 id = 1;
+    string raft_addr = 2;
+    string client_addr = 3;
+}

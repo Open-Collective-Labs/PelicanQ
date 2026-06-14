@@ -1,21 +1,25 @@
+use serde::{Deserialize, Serialize};
+
 use crate::message::DeliveryTag;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
 pub enum PelicanError {
-    #[error("queue not found: {0}")]
-    QueueNotFound(String),
+    #[error("queue not found: {queue}")]
+    QueueNotFound { queue: String },
 
-    #[error("queue already exists: {0}")]
-    QueueAlreadyExists(String),
+    #[error("queue already exists: {queue}")]
+    QueueAlreadyExists { queue: String },
 
-    #[error("storage error: {0}")]
-    Storage(#[from] sled::Error),
+    #[error("storage error: {message}")]
+    Storage { message: String },
 
-    #[error("serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
+    #[error("serialization error: {message}")]
+    Serialization { message: String },
 
-    #[error("invalid delivery tag: {0}")]
-    InvalidDeliveryTag(DeliveryTag),
+    #[error("invalid delivery tag: {tag}")]
+    InvalidDeliveryTag { tag: DeliveryTag },
 
     #[error("storage watermark exceeded: disk usage at {used_pct}%, limit is {limit_pct}%")]
     StorageLimitExceeded { used_pct: u8, limit_pct: u8 },

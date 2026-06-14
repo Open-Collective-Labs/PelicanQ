@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Per-queue retention policy. All fields optional; None means "no limit".
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetentionPolicy {
     /// Maximum age of a message in seconds before it's eligible for removal.
     pub max_age_secs: Option<u64>,

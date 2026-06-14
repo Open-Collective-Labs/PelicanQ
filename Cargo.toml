@@ -3,6 +3,9 @@ resolver = "2"
 members = [
     "pelicanq-core",
     "pelicanqd",
+    "pelicanq-raft",
+    "sdks/rust",
+    "examples/rust-publish-consume",
 ]
 
 [workspace.package]

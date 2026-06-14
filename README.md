@@ -1,15 +1,25 @@
 # PelicanQ
 
-**PelicanQ** is a distributed, crash-safe message queue built in Rust. Designed for reliability and simplicity, it provides at-least-once delivery with FIFO ordering, embedded persistence, and a clean HTTP API — with clustering (Raft), gRPC, and multi-language SDKs on the roadmap.
+**PelicanQ** is a distributed, crash-safe message queue built in Rust. It provides at-least-once delivery with FIFO ordering, embedded sled persistence, dual-protocol access (HTTP + gRPC), and Raft-based clustering for high availability.
 
 ## Quick Start
 
 ```bash
-# Build the project
+# Build the workspace
 cargo build
 
-# Run the daemon (once implemented)
-cargo run --bin pelicanqd
+# Run the daemon (Solo mode — single node, no Raft)
+PELICANQ_DATA_DIR=./data cargo run --bin pelicanqd
+
+# In another terminal, use the Rust SDK example:
+cargo run -p rust-publish-consume -- http://127.0.0.1:7072
+
+# Or use the HTTP API directly:
+curl -X POST http://127.0.0.1:7070/queues/myqueue
+curl -X POST http://127.0.0.1:7070/queues/myqueue/publish \
+  -H 'content-type: application/json' \
+  -d '{"payload_base64":"SGVsbG8=","headers":{}}'
+curl -X POST http://127.0.0.1:7070/queues/myqueue/consume
 ```
 
 ## Project Structure
@@ -17,19 +27,39 @@ cargo run --bin pelicanqd
 | Directory | Description |
 |---|---|
 | `pelicanq-core/` | Core engine: message types, queues, persistence, delivery |
-| `pelicanqd/` | Daemon binary with HTTP API |
+| `pelicanqd/` | Daemon binary with HTTP and gRPC API |
+| `pelicanq-raft/` | Raft consensus layer (openraft) for clustered mode |
+| `sdks/rust/` | Rust client SDK (reference implementation) |
 | `pelicanctl/` | CLI tool for managing PelicanQ |
-| `proto/` | Shared protobuf contracts |
-| `sdks/` | Client SDKs (Rust, Go, Python, Node, Java) |
-| `docs/` | Architecture, deployment, and roadmap docs |
+| `proto/` | Canonical protobuf contracts (source of truth) |
+| `docs/` | Architecture, clustering, deployment, and roadmap |
 | `examples/` | Runnable examples per SDK |
 | `scripts/` | Dev/build/release helper scripts |
-| `tests/` | Cross-crate integration tests |
+
+## Protocol Support
+
+| Protocol | Port (default) | Status |
+|---|---|---|
+| **HTTP/REST** | `127.0.0.1:7070` | ✅ Complete — all operations |
+| **gRPC** | `127.0.0.1:7072` | ✅ Complete — all operations including streaming consume |
+
+Both protocols serve the **same data** through the **same engine**. You can publish over HTTP and consume over gRPC, or vice versa.
+
+## SDKs
+
+| Language | Crate / Package | Status |
+|---|---|---|
+| **Rust** | `pelicanq` (`sdks/rust/`) | ✅ Reference implementation |
+| Go | — | ❌ Planned |
+| Python | — | ❌ Planned |
+| Node.js | — | ❌ Planned |
+| Java | — | ❌ Planned |
 
 ## Documentation
 
 - [Features & Spec](FEATURES.md) — full feature specification
-- [Architecture](docs/architecture.md) — storage model, delivery semantics, retention
+- [Architecture](docs/architecture.md) — storage model, delivery semantics, retention, gRPC
+- [Clustering](docs/clustering.md) — Raft Flock mode configuration and operations
 - [Deployment Tiers](docs/deployment-tiers.md) — Solo vs Flock cluster modes
 - [Roadmap](docs/roadmap.md) — upcoming features and build plan
 
@@ -37,7 +67,7 @@ cargo run --bin pelicanqd
 
 ```bash
 # Run all tests
-cargo test
+cargo test --workspace
 
 # Build in release mode
 cargo build --release

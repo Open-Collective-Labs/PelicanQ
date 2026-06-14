@@ -3,12 +3,16 @@ use std::sync::{Arc, Mutex};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use pelicanq_core::queue::QueueManager;
+use pelicanqd::api::AppEngine;
 use tower::ServiceExt;
 
-fn test_state() -> pelicanqd::api::AppState {
+fn test_state() -> pelicanqd::api::SharedState {
     let dir = tempfile::tempdir().unwrap();
     let mgr = QueueManager::open(dir.path(), None).unwrap();
-    Arc::new(Mutex::new(mgr))
+    Arc::new(pelicanqd::api::AppState {
+        engine: AppEngine::Solo(Arc::new(Mutex::new(mgr))),
+        cluster: None,
+    })
 }
 
 #[tokio::test]

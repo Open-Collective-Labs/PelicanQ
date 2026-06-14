@@ -1,0 +1,18 @@
+syntax = "proto3";
+package pelicanq.v1;
+
+message Message {
+    string id = 1;
+    bytes payload = 2;
+    map<string, string> headers = 3;
+    int64 timestamp = 4;
+    uint32 priority = 5;
+    optional int64 deliver_at = 6;
+    optional string dedup_key = 7;
+    uint32 delivery_attempts = 8;
+}
+
+message ConsumedMessage {
+    uint64 delivery_tag = 1;
+    Message message = 2;
+}

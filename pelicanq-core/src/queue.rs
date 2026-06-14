@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use sled::transaction::ConflictableTransactionError;
 use sled::Transactional;
 
@@ -9,7 +10,8 @@ use crate::message::Message;
 use crate::retention::RetentionPolicy;
 
 /// Outcome of a `publish` call.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PublishOutcome {
     /// The message was stored. Contains the message's UUID.
     Stored(uuid::Uuid),
@@ -56,12 +58,13 @@ const META_QUEUES_TREE: &str = "__meta__queues";
 const META_RETENTION_TREE: &str = "__meta__retention";
 
 /// Manages a named collection of queues backed by sled storage.
+#[derive(Debug)]
 pub struct QueueManager {
-    db: sled::Db,
-    meta_tree: sled::Tree,
-    retention_tree: sled::Tree,
-    current_bytes: u64,
-    max_bytes: Option<u64>,
+    pub(crate) db: sled::Db,
+    pub(crate) meta_tree: sled::Tree,
+    pub(crate) retention_tree: sled::Tree,
+    pub(crate) current_bytes: u64,
+    pub(crate) max_bytes: Option<u64>,
 }
 
 impl QueueManager {
@@ -70,9 +73,14 @@ impl QueueManager {
     /// `max_bytes` sets the approximate byte limit for engine-attributed storage.
     /// `None` means no limit.
     pub fn open(data_dir: &Path, max_bytes: Option<u64>) -> Result<Self, PelicanError> {
-        let db = sled::open(data_dir)?;
-        let meta_tree = db.open_tree(META_QUEUES_TREE)?;
-        let retention_tree = db.open_tree(META_RETENTION_TREE)?;
+        let db = sled::open(data_dir)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        let meta_tree = db
+            .open_tree(META_QUEUES_TREE)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        let retention_tree = db
+            .open_tree(META_RETENTION_TREE)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
 
         let mut mgr = Self {
             db,
@@ -82,7 +90,6 @@ impl QueueManager {
             max_bytes,
         };
 
-        // Phase 1 simplification: tracks engine-attributed bytes, not raw OS disk usage.
         mgr.current_bytes = mgr.recalculate_bytes()?;
         mgr.recover_inflight()?;
 
@@ -90,32 +97,52 @@ impl QueueManager {
     }
 
     /// Recalculates the total byte count by summing all queue, inflight, DLQ, and scheduled entries.
-    fn recalculate_bytes(&self) -> Result<u64, PelicanError> {
+    pub(crate) fn recalculate_bytes(&self) -> Result<u64, PelicanError> {
         let mut total: u64 = 0;
         for name in self.list_queues() {
-            let tree = self.db.open_tree(&name)?;
+            let tree = self
+                .db
+                .open_tree(&name)
+                .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             for entry in tree.iter() {
-                let (_, value) = entry?;
+                let (_, value) = entry
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
                 total += value.len() as u64;
             }
-            let inflight = self.db.open_tree(Self::inflight_tree_name(&name))?;
+            let inflight = self
+                .db
+                .open_tree(Self::inflight_tree_name(&name))
+                .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             for entry in inflight.iter() {
-                let (_, value) = entry?;
+                let (_, value) = entry
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
                 total += value.len() as u64;
             }
-            let dlq = self.db.open_tree(Self::dlq_tree_name(&name))?;
+            let dlq = self
+                .db
+                .open_tree(Self::dlq_tree_name(&name))
+                .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             for entry in dlq.iter() {
-                let (_, value) = entry?;
+                let (_, value) = entry
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
                 total += value.len() as u64;
             }
-            let scheduled = self.db.open_tree(Self::scheduled_tree_name(&name))?;
+            let scheduled = self
+                .db
+                .open_tree(Self::scheduled_tree_name(&name))
+                .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             for entry in scheduled.iter() {
-                let (_, value) = entry?;
+                let (_, value) = entry
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
                 total += value.len() as u64;
             }
-            let dedup = self.db.open_tree(Self::dedup_tree_name(&name))?;
+            let dedup = self
+                .db
+                .open_tree(Self::dedup_tree_name(&name))
+                .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             for entry in dedup.iter() {
-                let (_, value) = entry?;
+                let (_, value) = entry
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
                 total += value.len() as u64;
             }
         }
@@ -127,8 +154,14 @@ impl QueueManager {
     fn recover_inflight(&mut self) -> Result<(), PelicanError> {
         let names: Vec<String> = self.list_queues();
         for name in names {
-            let inflight = self.db.open_tree(format!("inflight:{}", &name))?;
-            let tree = self.db.open_tree(&name)?;
+            let inflight = self
+                .db
+                .open_tree(format!("inflight:{}", &name))
+                .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+            let tree = self
+                .db
+                .open_tree(&name)
+                .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
 
             let entries: Vec<(sled::IVec, sled::IVec)> = inflight
                 .iter()
@@ -140,48 +173,52 @@ impl QueueManager {
             }
 
             for (_key_bytes, value) in &entries {
-                let msg: Message = bincode::deserialize(value)?;
-                let new_id = self.db.generate_id()?;
+                let msg: Message =
+                    bincode::deserialize(value).map_err(|e| PelicanError::Serialization {
+                        message: e.to_string(),
+                    })?;
+                let new_id = self
+                    .db
+                    .generate_id()
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
                 let new_key = Self::encode_key(msg.priority, new_id);
-                tree.insert(new_key.as_slice(), value.as_ref())?;
+                tree.insert(new_key.as_slice(), value.as_ref())
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             }
 
             for (key_bytes, _) in &entries {
-                inflight.remove(key_bytes)?;
+                inflight
+                    .remove(key_bytes)
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             }
         }
         Ok(())
     }
 
-    fn inflight_tree_name(name: &str) -> String {
+    pub(crate) fn inflight_tree_name(name: &str) -> String {
         format!("inflight:{}", name)
     }
 
-    fn dlq_tree_name(name: &str) -> String {
+    pub(crate) fn dlq_tree_name(name: &str) -> String {
         format!("dlq:{}", name)
     }
 
-    fn scheduled_tree_name(name: &str) -> String {
+    pub(crate) fn scheduled_tree_name(name: &str) -> String {
         format!("scheduled:{}", name)
     }
 
-    fn dedup_tree_name(name: &str) -> String {
+    pub(crate) fn dedup_tree_name(name: &str) -> String {
         format!("dedup:{}", name)
     }
 
-    /// Encodes a 16-byte scheduled key: 8 bytes big-endian `deliver_at_ms`
-    /// (cast to u64 — always positive for future timestamps), followed by
-    /// 8 bytes big-endian id.
-    fn encode_scheduled_key(deliver_at_ms: i64, id: u64) -> [u8; 16] {
+    pub(crate) fn encode_scheduled_key(deliver_at_ms: i64, id: u64) -> [u8; 16] {
         let mut key = [0u8; 16];
         key[0..8].copy_from_slice(&(deliver_at_ms as u64).to_be_bytes());
         key[8..16].copy_from_slice(&id.to_be_bytes());
         key
     }
 
-    /// Encodes a 9-byte storage key: 1 byte priority prefix so higher priority
-    /// sorts first, followed by 8 bytes big-endian id.
-    fn encode_key(priority: u8, id: u64) -> [u8; 9] {
+    pub(crate) fn encode_key(priority: u8, id: u64) -> [u8; 9] {
         let mut key = [0u8; 9];
         key[0] = 9u8.saturating_sub(priority.min(9));
         key[1..9].copy_from_slice(&id.to_be_bytes());
@@ -199,17 +236,40 @@ impl QueueManager {
         name: &str,
         policy: RetentionPolicy,
     ) -> Result<(), PelicanError> {
-        if self.meta_tree.contains_key(name)? {
-            return Err(PelicanError::QueueAlreadyExists(name.to_string()));
+        if self
+            .meta_tree
+            .contains_key(name)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
+            return Err(PelicanError::QueueAlreadyExists {
+                queue: name.to_string(),
+            });
         }
-        self.meta_tree.insert(name, &[])?;
-        self.db.open_tree(name)?;
-        self.db.open_tree(Self::inflight_tree_name(name))?;
-        self.db.open_tree(Self::dlq_tree_name(name))?;
-        self.db.open_tree(Self::scheduled_tree_name(name))?;
-        self.db.open_tree(Self::dedup_tree_name(name))?;
-        let policy_bytes = bincode::serialize(&policy)?;
-        self.retention_tree.insert(name, policy_bytes)?;
+        self.meta_tree
+            .insert(name, &[])
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        self.db
+            .open_tree(name)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        self.db
+            .open_tree(Self::inflight_tree_name(name))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        self.db
+            .open_tree(Self::dlq_tree_name(name))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        self.db
+            .open_tree(Self::scheduled_tree_name(name))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        self.db
+            .open_tree(Self::dedup_tree_name(name))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        let policy_bytes =
+            bincode::serialize(&policy).map_err(|e| PelicanError::Serialization {
+                message: e.to_string(),
+            })?;
+        self.retention_tree
+            .insert(name, policy_bytes)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
         Ok(())
     }
 
@@ -225,32 +285,42 @@ impl QueueManager {
         queue: &str,
         message: Message,
     ) -> Result<PublishOutcome, PelicanError> {
-        if !self.meta_tree.contains_key(queue)? {
-            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        if !self
+            .meta_tree
+            .contains_key(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
+            return Err(PelicanError::QueueNotFound {
+                queue: queue.to_string(),
+            });
         }
 
         // Deduplication check
         let policy: RetentionPolicy = self
             .retention_tree
-            .get(queue)?
+            .get(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
             .and_then(|b| bincode::deserialize(&b).ok())
             .unwrap_or_default();
 
         if let Some(window_secs) = policy.dedup_window_secs {
             if window_secs > 0 {
                 if let Some(ref dedup_key) = message.dedup_key {
-                    let dedup_tree = self.db.open_tree(Self::dedup_tree_name(queue))?;
-                    if let Some(recorded) = dedup_tree.get(dedup_key.as_bytes())? {
+                    let dedup_tree = self
+                        .db
+                        .open_tree(Self::dedup_tree_name(queue))
+                        .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+                    if let Some(recorded) = dedup_tree
+                        .get(dedup_key.as_bytes())
+                        .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+                    {
                         let recorded_ms = i64::from_be_bytes(
                             recorded[..8]
                                 .try_into()
-                                .map_err(|e: std::array::TryFromSliceError| {
-                                    PelicanError::Storage(sled::Error::Io(
-                                        std::io::Error::new(
-                                            std::io::ErrorKind::InvalidData,
-                                            e,
-                                        ),
-                                    ))
+                                .map_err(|e| {
+                                    PelicanError::Storage {
+                                        message: format!("invalid dedup key bytes: {e}"),
+                                    }
                                 })?,
                         );
                         let window_ms = (window_secs as i64) * 1000;
@@ -262,7 +332,9 @@ impl QueueManager {
             }
         }
 
-        let value = bincode::serialize(&message)?;
+        let value = bincode::serialize(&message).map_err(|e| PelicanError::Serialization {
+            message: e.to_string(),
+        })?;
         let msg_len = value.len() as u64;
 
         if let Some(max) = self.max_bytes {
@@ -280,22 +352,34 @@ impl QueueManager {
         }
 
         let stored = message.id;
-        let id = self.db.generate_id()?;
+        let id = self
+            .db
+            .generate_id()
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
 
         if let Some(deliver_at) = message.deliver_at {
             if deliver_at > Message::now_ms() {
-                let scheduled = self.db.open_tree(Self::scheduled_tree_name(queue))?;
+                let scheduled = self
+                    .db
+                    .open_tree(Self::scheduled_tree_name(queue))
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
                 let key = Self::encode_scheduled_key(deliver_at, id);
-                scheduled.insert(key.as_slice(), value.as_slice())?;
+                scheduled
+                    .insert(key.as_slice(), value.as_slice())
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
                 self.current_bytes += msg_len;
                 self.record_dedup_key(queue, &message, &policy)?;
                 return Ok(PublishOutcome::Stored(stored));
             }
         }
 
-        let tree = self.db.open_tree(queue)?;
+        let tree = self
+            .db
+            .open_tree(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
         let key = Self::encode_key(message.priority, id);
-        tree.insert(key.as_slice(), value.as_slice())?;
+        tree.insert(key.as_slice(), value.as_slice())
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
 
         self.current_bytes += msg_len;
         self.record_dedup_key(queue, &message, &policy)?;
@@ -312,11 +396,13 @@ impl QueueManager {
     ) -> Result<(), PelicanError> {
         if policy.dedup_window_secs.is_some() {
             if let Some(ref dedup_key) = message.dedup_key {
-                let dedup_tree = self.db.open_tree(Self::dedup_tree_name(queue))?;
-                dedup_tree.insert(
-                    dedup_key.as_bytes(),
-                    &Message::now_ms().to_be_bytes(),
-                )?;
+                let dedup_tree = self
+                    .db
+                    .open_tree(Self::dedup_tree_name(queue))
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+                dedup_tree
+                    .insert(dedup_key.as_bytes(), &Message::now_ms().to_be_bytes())
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             }
         }
         Ok(())
@@ -329,12 +415,24 @@ impl QueueManager {
         &mut self,
         queue: &str,
     ) -> Result<Option<(DeliveryTag, Message)>, PelicanError> {
-        if !self.meta_tree.contains_key(queue)? {
-            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        if !self
+            .meta_tree
+            .contains_key(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
+            return Err(PelicanError::QueueNotFound {
+                queue: queue.to_string(),
+            });
         }
 
-        let tree = self.db.open_tree(queue)?;
-        let inflight = self.db.open_tree(Self::inflight_tree_name(queue))?;
+        let tree = self
+            .db
+            .open_tree(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        let inflight = self
+            .db
+            .open_tree(Self::inflight_tree_name(queue))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
 
         loop {
             let min_key = tree
@@ -350,11 +448,10 @@ impl QueueManager {
 
             let id_bytes: [u8; 8] = key[1..9]
                 .try_into()
-                .map_err(|e: std::array::TryFromSliceError| {
-                    PelicanError::Storage(sled::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        e,
-                    )))
+                .map_err(|e| {
+                    PelicanError::Storage {
+                        message: format!("invalid key format: {e}"),
+                    }
                 })?;
             let id = u64::from_be_bytes(id_bytes);
 
@@ -363,7 +460,6 @@ impl QueueManager {
                     match tx_tree.remove(key.as_slice())? {
                         Some(value) => {
                             let val_bytes = value.to_vec();
-                            // Inflight key is just the 8-byte id (no priority prefix)
                             tx_inflight.insert(&id_bytes, value)?;
                             Ok(val_bytes)
                         }
@@ -373,15 +469,21 @@ impl QueueManager {
 
             match result {
                 Ok(val_bytes) => {
-                    let msg: Message = bincode::deserialize(&val_bytes)?;
+                    let msg: Message =
+                        bincode::deserialize(&val_bytes).map_err(|e| {
+                            PelicanError::Serialization {
+                                message: e.to_string(),
+                            }
+                        })?;
                     return Ok(Some((DeliveryTag(id), msg)));
                 }
                 Err(sled::transaction::TransactionError::Abort(())) => {
-                    // Key was taken between iter and transaction; retry with next key
                     continue;
                 }
                 Err(sled::transaction::TransactionError::Storage(e)) => {
-                    return Err(PelicanError::Storage(e));
+                    return Err(PelicanError::Storage {
+                        message: e.to_string(),
+                    });
                 }
             }
         }
@@ -389,19 +491,31 @@ impl QueueManager {
 
     /// Permanently removes a message from the in-flight store.
     pub fn ack(&mut self, queue: &str, delivery_tag: DeliveryTag) -> Result<(), PelicanError> {
-        if !self.meta_tree.contains_key(queue)? {
-            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        if !self
+            .meta_tree
+            .contains_key(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
+            return Err(PelicanError::QueueNotFound {
+                queue: queue.to_string(),
+            });
         }
 
-        let inflight = self.db.open_tree(Self::inflight_tree_name(queue))?;
+        let inflight = self
+            .db
+            .open_tree(Self::inflight_tree_name(queue))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
         let key = delivery_tag.0.to_be_bytes();
 
-        match inflight.remove(key.as_slice())? {
+        match inflight
+            .remove(key.as_slice())
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
             Some(value) => {
                 self.current_bytes = self.current_bytes.saturating_sub(value.len() as u64);
                 Ok(())
             }
-            None => Err(PelicanError::InvalidDeliveryTag(delivery_tag)),
+            None => Err(PelicanError::InvalidDeliveryTag { tag: delivery_tag }),
         }
     }
 
@@ -409,28 +523,45 @@ impl QueueManager {
     /// incrementing its delivery attempt counter. If the queue's retention policy
     /// specifies `max_delivery_attempts` and the message has reached that threshold,
     /// it is routed to the dead-letter queue (DLQ) instead of being requeued.
-    /// The re-inserted key is computed from the message's priority so that higher
-    /// priority messages are delivered first.
     pub fn nack(
         &mut self,
         queue: &str,
         delivery_tag: DeliveryTag,
     ) -> Result<(), PelicanError> {
-        if !self.meta_tree.contains_key(queue)? {
-            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        if !self
+            .meta_tree
+            .contains_key(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
+            return Err(PelicanError::QueueNotFound {
+                queue: queue.to_string(),
+            });
         }
 
         let policy: RetentionPolicy = self
             .retention_tree
-            .get(queue)?
+            .get(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
             .and_then(|b| bincode::deserialize(&b).ok())
             .unwrap_or_default();
 
-        let tree = self.db.open_tree(queue)?;
-        let inflight = self.db.open_tree(Self::inflight_tree_name(queue))?;
-        let dlq_tree = self.db.open_tree(Self::dlq_tree_name(queue))?;
+        let tree = self
+            .db
+            .open_tree(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        let inflight = self
+            .db
+            .open_tree(Self::inflight_tree_name(queue))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        let dlq_tree = self
+            .db
+            .open_tree(Self::dlq_tree_name(queue))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
         let old_key = delivery_tag.0.to_be_bytes();
-        let new_id = self.db.generate_id()?;
+        let new_id = self
+            .db
+            .generate_id()
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
 
         let max_attempts = policy.max_delivery_attempts;
 
@@ -466,10 +597,12 @@ impl QueueManager {
         match result {
             Ok(()) => Ok(()),
             Err(sled::transaction::TransactionError::Abort(())) => {
-                Err(PelicanError::InvalidDeliveryTag(delivery_tag))
+                Err(PelicanError::InvalidDeliveryTag { tag: delivery_tag })
             }
             Err(sled::transaction::TransactionError::Storage(e)) => {
-                Err(PelicanError::Storage(e))
+                Err(PelicanError::Storage {
+                    message: e.to_string(),
+                })
             }
         }
     }
@@ -477,38 +610,60 @@ impl QueueManager {
     /// Returns the number of messages currently in the dead-letter queue for the
     /// named queue. Errors if the queue doesn't exist.
     pub fn dead_letter_count(&self, queue: &str) -> Result<usize, PelicanError> {
-        if !self.meta_tree.contains_key(queue)? {
-            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        if !self
+            .meta_tree
+            .contains_key(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
+            return Err(PelicanError::QueueNotFound {
+                queue: queue.to_string(),
+            });
         }
-        let dlq = self.db.open_tree(Self::dlq_tree_name(queue))?;
+        let dlq = self
+            .db
+            .open_tree(Self::dlq_tree_name(queue))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
         Ok(dlq.len())
     }
 
     /// Moves all scheduled messages whose `deliver_at` has passed (<= now) from
     /// the scheduled tree into the main queue tree, using the message's priority
     /// for key encoding. Returns the number of messages promoted.
-    /// This does NOT run automatically — callers invoke it periodically.
     pub fn promote_scheduled(&mut self, queue: &str) -> Result<usize, PelicanError> {
-        if !self.meta_tree.contains_key(queue)? {
-            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        if !self
+            .meta_tree
+            .contains_key(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
+            return Err(PelicanError::QueueNotFound {
+                queue: queue.to_string(),
+            });
         }
 
-        let scheduled = self.db.open_tree(Self::scheduled_tree_name(queue))?;
-        let tree = self.db.open_tree(queue)?;
+        let scheduled = self
+            .db
+            .open_tree(Self::scheduled_tree_name(queue))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+        let tree = self
+            .db
+            .open_tree(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
         let now_ms = Message::now_ms();
 
         let mut to_promote: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
 
-        for entry in scheduled.iter() {
+        for entry in scheduled
+            .iter()
+            .map(|e| e.map_err(|e| PelicanError::Storage { message: e.to_string() }))
+        {
             let (key, value) = entry?;
             let deliver_at_u64 = u64::from_be_bytes(
                 key[..8]
                     .try_into()
-                    .map_err(|e: std::array::TryFromSliceError| {
-                        PelicanError::Storage(sled::Error::Io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            e,
-                        )))
+                    .map_err(|e| {
+                        PelicanError::Storage {
+                            message: format!("invalid scheduled key: {e}"),
+                        }
                     })?,
             );
             let deliver_at_ms = deliver_at_u64 as i64;
@@ -520,8 +675,14 @@ impl QueueManager {
 
         let mut promoted = 0usize;
         for (scheduled_key, value) in &to_promote {
-            let msg: Message = bincode::deserialize(value)?;
-            let new_id = self.db.generate_id()?;
+            let msg: Message =
+                bincode::deserialize(value).map_err(|e| PelicanError::Serialization {
+                    message: e.to_string(),
+                })?;
+            let new_id = self
+                .db
+                .generate_id()
+                .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             let main_key = Self::encode_key(msg.priority, new_id);
 
             let result: sled::transaction::TransactionResult<(), ()> =
@@ -533,11 +694,11 @@ impl QueueManager {
 
             match result {
                 Ok(()) => promoted += 1,
-                Err(sled::transaction::TransactionError::Abort(())) => {
-                    // Should not happen with our closure
-                }
+                Err(sled::transaction::TransactionError::Abort(())) => {}
                 Err(sled::transaction::TransactionError::Storage(e)) => {
-                    return Err(PelicanError::Storage(e));
+                    return Err(PelicanError::Storage {
+                        message: e.to_string(),
+                    });
                 }
             }
         }
@@ -547,46 +708,67 @@ impl QueueManager {
 
     /// Number of messages waiting in the scheduled (not-yet-due) store for this queue.
     pub fn scheduled_depth(&self, queue: &str) -> Result<usize, PelicanError> {
-        if !self.meta_tree.contains_key(queue)? {
-            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        if !self
+            .meta_tree
+            .contains_key(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
+            return Err(PelicanError::QueueNotFound {
+                queue: queue.to_string(),
+            });
         }
-        let scheduled = self.db.open_tree(Self::scheduled_tree_name(queue))?;
+        let scheduled = self
+            .db
+            .open_tree(Self::scheduled_tree_name(queue))
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
         Ok(scheduled.len())
     }
 
     /// Returns the current depth of the named queue (main tree only).
-    /// Errors if the queue doesn't exist.
     pub fn depth(&self, queue: &str) -> Result<usize, PelicanError> {
-        if !self.meta_tree.contains_key(queue)? {
-            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        if !self
+            .meta_tree
+            .contains_key(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
+            return Err(PelicanError::QueueNotFound {
+                queue: queue.to_string(),
+            });
         }
-        let tree = self.db.open_tree(queue)?;
+        let tree = self
+            .db
+            .open_tree(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
         Ok(tree.len())
     }
 
     /// Lists all declared queue names.
     pub fn list_queues(&self) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .meta_tree
+        self.meta_tree
             .iter()
             .keys()
             .filter_map(|k| k.ok())
             .filter_map(|k| String::from_utf8(k.to_vec()).ok())
-            .collect();
-        names.sort();
-        names
+            .collect::<Vec<_>>()
     }
 
     /// Removes messages exceeding the queue's retention policy (max_age_secs, max_messages).
     /// Returns the number of messages removed.
     pub fn apply_retention(&mut self, queue: &str) -> Result<usize, PelicanError> {
-        if !self.meta_tree.contains_key(queue)? {
-            return Err(PelicanError::QueueNotFound(queue.to_string()));
+        if !self
+            .meta_tree
+            .contains_key(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
+        {
+            return Err(PelicanError::QueueNotFound {
+                queue: queue.to_string(),
+            });
         }
 
         let policy: RetentionPolicy = self
             .retention_tree
-            .get(queue)?
+            .get(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?
             .and_then(|b| bincode::deserialize(&b).ok())
             .unwrap_or_default();
 
@@ -594,7 +776,10 @@ impl QueueManager {
             return Ok(0);
         }
 
-        let tree = self.db.open_tree(queue)?;
+        let tree = self
+            .db
+            .open_tree(queue)
+            .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
         let mut removed = 0usize;
 
         if let Some(max_age_secs) = policy.max_age_secs {
@@ -606,17 +791,21 @@ impl QueueManager {
             let mut to_remove = vec![];
 
             for entry in tree.iter() {
-                let (key, value) = entry?;
-                let msg: Message = bincode::deserialize(&value)?;
+                let (key, value) = entry
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
+                let msg: Message =
+                    bincode::deserialize(&value).map_err(|e| PelicanError::Serialization {
+                        message: e.to_string(),
+                    })?;
                 let age_ms = now_ms - msg.timestamp;
                 if age_ms >= max_age_ms {
                     to_remove.push(key.to_vec());
                 }
-                // No early break — priority-based keys are not strictly chronological.
             }
 
             for key in &to_remove {
-                tree.remove(key)?;
+                tree.remove(key)
+                    .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
             }
             removed += to_remove.len();
         }
@@ -632,13 +821,15 @@ impl QueueManager {
                     if count >= excess {
                         break;
                     }
-                    let (key, _) = entry?;
+                    let (key, _) = entry
+                        .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
                     to_remove.push(key.to_vec());
                     count += 1;
                 }
 
                 for key in &to_remove {
-                    tree.remove(key)?;
+                    tree.remove(key)
+                        .map_err(|e| PelicanError::Storage { message: e.to_string() })?;
                 }
                 removed += to_remove.len();
             }
@@ -665,8 +856,6 @@ mod tests {
         f(mgr);
     }
 
-    // --- Step 1 & 2 acceptance tests (adapted) ---
-
     #[test]
     fn test_declare_queue_then_depth_zero() {
         with_manager(|mut mgr| {
@@ -680,7 +869,7 @@ mod tests {
         with_manager(|mut mgr| {
             mgr.declare_queue("test").unwrap();
             let err = mgr.declare_queue("test").unwrap_err();
-            assert!(matches!(err, PelicanError::QueueAlreadyExists(_)));
+            assert!(matches!(err, PelicanError::QueueAlreadyExists { .. }));
         });
     }
 
@@ -715,15 +904,14 @@ mod tests {
     #[test]
     fn test_operations_on_nonexistent_queue_error() {
         with_manager(|mut mgr| {
-            let err1 =
-                mgr.publish("nonexistent", Message::new(b"x".to_vec(), std::collections::HashMap::new()));
-            assert!(matches!(err1, Err(PelicanError::QueueNotFound(_))));
+            let err1 = mgr.publish("nonexistent", Message::new(b"x".to_vec(), std::collections::HashMap::new()));
+            assert!(matches!(err1, Err(PelicanError::QueueNotFound { .. })));
 
             let err2 = mgr.consume("nonexistent");
-            assert!(matches!(err2, Err(PelicanError::QueueNotFound(_))));
+            assert!(matches!(err2, Err(PelicanError::QueueNotFound { .. })));
 
             let err3 = mgr.depth("nonexistent");
-            assert!(matches!(err3, Err(PelicanError::QueueNotFound(_))));
+            assert!(matches!(err3, Err(PelicanError::QueueNotFound { .. })));
         });
     }
 
@@ -789,7 +977,7 @@ mod tests {
 
         let mut mgr = QueueManager::open(dir.path(), None).unwrap();
         let err = mgr.declare_queue("perm").unwrap_err();
-        assert!(matches!(err, PelicanError::QueueAlreadyExists(_)));
+        assert!(matches!(err, PelicanError::QueueAlreadyExists { .. }));
     }
 
     #[test]
@@ -807,8 +995,6 @@ mod tests {
         assert_eq!(names, vec!["alpha", "beta"]);
     }
 
-    // --- Step 3 acceptance tests (ack/nack, crash recovery) ---
-
     #[test]
     fn test_basic_ack() {
         let dir = tempfile::tempdir().unwrap();
@@ -823,7 +1009,6 @@ mod tests {
             assert_eq!(mgr.depth("q").unwrap(), 0);
         }
 
-        // Re-open — message should NOT be redelivered
         let mut mgr = QueueManager::open(dir.path(), None).unwrap();
         assert_eq!(mgr.depth("q").unwrap(), 0);
         assert!(mgr.consume("q").unwrap().is_none());
@@ -843,11 +1028,9 @@ mod tests {
 
             mgr.nack("q", tag_a).unwrap();
 
-            // Next consume returns B (A went to the back)
             let (_, msg_b) = mgr.consume("q").unwrap().unwrap();
             assert_eq!(msg_b.payload, b"B");
 
-            // Then A again
             let (_, msg_a2) = mgr.consume("q").unwrap().unwrap();
             assert_eq!(msg_a2.payload, b"A");
         });
@@ -857,17 +1040,14 @@ mod tests {
     fn test_crash_recovery_inflight_requeued() {
         let dir = tempfile::tempdir().unwrap();
 
-        // Publish, consume (moves to inflight), drop without ack (simulate crash)
         {
             let mut mgr = QueueManager::open(dir.path(), None).unwrap();
             mgr.declare_queue("q").unwrap();
             mgr.publish("q", Message::new(b"crash-test".to_vec(), std::collections::HashMap::new()))
                 .unwrap();
             let (_tag, _) = mgr.consume("q").unwrap().unwrap();
-            // drop WITHOUT ack — tag is forgotten
         }
 
-        // Re-open — in-flight message should be requeued
         let mut mgr = QueueManager::open(dir.path(), None).unwrap();
         assert_eq!(mgr.depth("q").unwrap(), 1);
         let (_, msg) = mgr.consume("q").unwrap().unwrap();
@@ -880,14 +1060,12 @@ mod tests {
             mgr.declare_queue("q").unwrap();
 
             let err = mgr.ack("q", DeliveryTag(999));
-            assert!(matches!(err, Err(PelicanError::InvalidDeliveryTag(_))));
+            assert!(matches!(err, Err(PelicanError::InvalidDeliveryTag { .. })));
 
             let err = mgr.nack("q", DeliveryTag(999));
-            assert!(matches!(err, Err(PelicanError::InvalidDeliveryTag(_))));
+            assert!(matches!(err, Err(PelicanError::InvalidDeliveryTag { .. })));
         });
     }
-
-    // --- Step 4 acceptance tests (retention, storage limits) ---
 
     #[test]
     fn test_max_messages_retention() {
@@ -911,7 +1089,6 @@ mod tests {
             assert_eq!(removed, 1);
             assert_eq!(mgr.depth("q").unwrap(), 2);
 
-            // Oldest message should be gone
             let (_, msg) = mgr.consume("q").unwrap().unwrap();
             assert_eq!(msg.payload, b"middle");
         });
@@ -942,7 +1119,6 @@ mod tests {
         let mut mgr = QueueManager::open(dir.path(), Some(100)).unwrap();
         mgr.declare_queue("q").unwrap();
 
-        // Publish until we hit the limit
         let mut count = 0;
         loop {
             let payload = vec![b'x'; 32];
@@ -962,16 +1138,20 @@ mod tests {
         with_manager(|mut mgr| {
             mgr.declare_queue("q").unwrap();
             for i in 0..100 {
-                mgr.publish("q", Message::new(format!("msg-{}", i).into_bytes(), std::collections::HashMap::new()))
-                    .unwrap();
+                mgr.publish(
+                    "q",
+                    Message::new(
+                        format!("msg-{}", i).into_bytes(),
+                        std::collections::HashMap::new(),
+                    ),
+                )
+                .unwrap();
             }
             let removed = mgr.apply_retention("q").unwrap();
             assert_eq!(removed, 0);
             assert_eq!(mgr.depth("q").unwrap(), 100);
         });
     }
-
-    // --- Phase 2, Step 1 acceptance tests (delivery attempts & DLQ) ---
 
     #[test]
     fn test_delivery_attempt_increments_on_nack() {
@@ -1004,25 +1184,24 @@ mod tests {
             )
             .unwrap();
 
-            mgr.publish("dlq-test", Message::new(b"will-die".to_vec(), std::collections::HashMap::new()))
-                .unwrap();
+            mgr.publish(
+                "dlq-test",
+                Message::new(b"will-die".to_vec(), std::collections::HashMap::new()),
+            )
+            .unwrap();
 
-            // First consume + nack → delivery_attempts becomes 1, requeued
             let (tag1, msg1) = mgr.consume("dlq-test").unwrap().unwrap();
             assert_eq!(msg1.payload, b"will-die");
             mgr.nack("dlq-test", tag1).unwrap();
             assert_eq!(mgr.dead_letter_count("dlq-test").unwrap(), 0);
 
-            // Second consume + nack → delivery_attempts becomes 2, dead-lettered
             let (tag2, msg2) = mgr.consume("dlq-test").unwrap().unwrap();
             assert_eq!(msg2.payload, b"will-die");
             mgr.nack("dlq-test", tag2).unwrap();
 
-            // Queue should now be empty
             assert_eq!(mgr.depth("dlq-test").unwrap(), 0);
             assert!(mgr.consume("dlq-test").unwrap().is_none());
 
-            // DLQ should have the message
             assert_eq!(mgr.dead_letter_count("dlq-test").unwrap(), 1);
         });
     }
@@ -1041,7 +1220,6 @@ mod tests {
                 mgr.nack("q", tag).unwrap();
             }
 
-            // Message should still be in the queue after 5 nacks
             assert_eq!(mgr.depth("q").unwrap(), 1);
             assert_eq!(mgr.dead_letter_count("q").unwrap(), 0);
         });
@@ -1051,7 +1229,7 @@ mod tests {
     fn test_dead_letter_count_on_nonexistent_queue() {
         with_manager(|mgr| {
             let err = mgr.dead_letter_count("nope");
-            assert!(matches!(err, Err(PelicanError::QueueNotFound(_))));
+            assert!(matches!(err, Err(PelicanError::QueueNotFound { .. })));
         });
     }
 
@@ -1067,8 +1245,11 @@ mod tests {
             )
             .unwrap();
 
-            mgr.publish("q", Message::new(b"persist-dlq".to_vec(), std::collections::HashMap::new()))
-                .unwrap();
+            mgr.publish(
+                "q",
+                Message::new(b"persist-dlq".to_vec(), std::collections::HashMap::new()),
+            )
+            .unwrap();
 
             let (tag, _) = mgr.consume("q").unwrap().unwrap();
             mgr.nack("q", tag).unwrap();
@@ -1076,15 +1257,12 @@ mod tests {
             assert_eq!(mgr.dead_letter_count("q").unwrap(), 1);
         }
 
-        // Re-open — DLQ should still have the message
         let mgr = QueueManager::open(dir.path(), None).unwrap();
         assert_eq!(mgr.dead_letter_count("q").unwrap(), 1);
     }
 
     #[test]
     fn test_delivery_attempts_binary_backward_compat() {
-        // Verify that a freshly created message serializes/deserializes
-        // with delivery_attempts = 0.
         let msg = Message::new(b"compat".to_vec(), std::collections::HashMap::new());
         let bytes = bincode::serialize(&msg).unwrap();
         let deserialized: Message = bincode::deserialize(&bytes).unwrap();
@@ -1092,14 +1270,11 @@ mod tests {
         assert_eq!(deserialized.payload, b"compat");
     }
 
-    // --- Phase 2, Step 3 acceptance tests (priority queues) ---
-
     #[test]
     fn test_priority_delivery_order() {
         with_manager(|mut mgr| {
             mgr.declare_queue("prio").unwrap();
 
-            // Publish A (priority 0), B (priority 5), C (priority 0)
             mgr.publish(
                 "prio",
                 Message::new(b"A".to_vec(), std::collections::HashMap::new()),
@@ -1117,7 +1292,6 @@ mod tests {
             )
             .unwrap();
 
-            // Consume 3 times → order is B, A, C
             let (_, m1) = mgr.consume("prio").unwrap().unwrap();
             let (_, m2) = mgr.consume("prio").unwrap().unwrap();
             let (_, m3) = mgr.consume("prio").unwrap().unwrap();
@@ -1243,14 +1417,12 @@ mod tests {
         });
     }
 
-    // --- Phase 2, Step 4 acceptance tests (delayed / scheduled messages) ---
-
     #[test]
     fn test_scheduled_message_not_visible_to_consume() {
         with_manager(|mut mgr| {
             mgr.declare_queue("sched").unwrap();
 
-            let future = Message::now_ms() + 3_600_000; // 1 hour
+            let future = Message::now_ms() + 3_600_000;
             mgr.publish(
                 "sched",
                 Message::new(b"future".to_vec(), std::collections::HashMap::new())
@@ -1329,7 +1501,6 @@ mod tests {
         with_manager(|mut mgr| {
             mgr.declare_queue("delay").unwrap();
 
-            // Schedule a message 50ms in the future
             let future = Message::now_ms() + 50;
             mgr.publish(
                 "delay",
@@ -1341,7 +1512,6 @@ mod tests {
             assert_eq!(mgr.depth("delay").unwrap(), 0);
             assert_eq!(mgr.scheduled_depth("delay").unwrap(), 1);
 
-            // Wait long enough for it to become due
             std::thread::sleep(std::time::Duration::from_millis(60));
 
             let promoted = mgr.promote_scheduled("delay").unwrap();
@@ -1358,7 +1528,7 @@ mod tests {
     fn test_scheduled_depth_on_nonexistent_queue() {
         with_manager(|mgr| {
             let err = mgr.scheduled_depth("nope");
-            assert!(matches!(err, Err(PelicanError::QueueNotFound(_))));
+            assert!(matches!(err, Err(PelicanError::QueueNotFound { .. })));
         });
     }
 
@@ -1366,11 +1536,9 @@ mod tests {
     fn test_promote_scheduled_on_nonexistent_queue() {
         with_manager(|mut mgr| {
             let err = mgr.promote_scheduled("nope");
-            assert!(matches!(err, Err(PelicanError::QueueNotFound(_))));
+            assert!(matches!(err, Err(PelicanError::QueueNotFound { .. })));
         });
     }
-
-    // --- Phase 2, Step 5 acceptance tests (deduplication) ---
 
     #[test]
     fn test_dedup_rejects_duplicate_within_window() {
@@ -1381,21 +1549,23 @@ mod tests {
             )
             .unwrap();
 
-            let outcome1 = mgr.publish(
-                "payments",
-                Message::new(b"txn-1".to_vec(), std::collections::HashMap::new())
-                    .with_dedup_key("txn-123"),
-            )
-            .unwrap();
+            let outcome1 = mgr
+                .publish(
+                    "payments",
+                    Message::new(b"txn-1".to_vec(), std::collections::HashMap::new())
+                        .with_dedup_key("txn-123"),
+                )
+                .unwrap();
             assert!(matches!(outcome1, PublishOutcome::Stored(_)));
             assert_eq!(mgr.depth("payments").unwrap(), 1);
 
-            let outcome2 = mgr.publish(
-                "payments",
-                Message::new(b"txn-2".to_vec(), std::collections::HashMap::new())
-                    .with_dedup_key("txn-123"),
-            )
-            .unwrap();
+            let outcome2 = mgr
+                .publish(
+                    "payments",
+                    Message::new(b"txn-2".to_vec(), std::collections::HashMap::new())
+                        .with_dedup_key("txn-123"),
+                )
+                .unwrap();
             assert_eq!(outcome2, PublishOutcome::Deduplicated);
             assert_eq!(mgr.depth("payments").unwrap(), 1);
         });
@@ -1410,18 +1580,20 @@ mod tests {
             )
             .unwrap();
 
-            let outcome1 = mgr.publish(
-                "payments",
-                Message::new(b"a".to_vec(), std::collections::HashMap::new()),
-            )
-            .unwrap();
+            let outcome1 = mgr
+                .publish(
+                    "payments",
+                    Message::new(b"a".to_vec(), std::collections::HashMap::new()),
+                )
+                .unwrap();
             assert!(matches!(outcome1, PublishOutcome::Stored(_)));
 
-            let outcome2 = mgr.publish(
-                "payments",
-                Message::new(b"b".to_vec(), std::collections::HashMap::new()),
-            )
-            .unwrap();
+            let outcome2 = mgr
+                .publish(
+                    "payments",
+                    Message::new(b"b".to_vec(), std::collections::HashMap::new()),
+                )
+                .unwrap();
             assert!(matches!(outcome2, PublishOutcome::Stored(_)));
 
             assert_eq!(mgr.depth("payments").unwrap(), 2);
@@ -1437,20 +1609,22 @@ mod tests {
             )
             .unwrap();
 
-            let outcome1 = mgr.publish(
-                "logs",
-                Message::new(b"x".to_vec(), std::collections::HashMap::new())
-                    .with_dedup_key("x"),
-            )
-            .unwrap();
+            let outcome1 = mgr
+                .publish(
+                    "logs",
+                    Message::new(b"x".to_vec(), std::collections::HashMap::new())
+                        .with_dedup_key("x"),
+                )
+                .unwrap();
             assert!(matches!(outcome1, PublishOutcome::Stored(_)));
 
-            let outcome2 = mgr.publish(
-                "logs",
-                Message::new(b"x".to_vec(), std::collections::HashMap::new())
-                    .with_dedup_key("x"),
-            )
-            .unwrap();
+            let outcome2 = mgr
+                .publish(
+                    "logs",
+                    Message::new(b"y".to_vec(), std::collections::HashMap::new())
+                        .with_dedup_key("x"),
+                )
+                .unwrap();
             assert!(matches!(outcome2, PublishOutcome::Stored(_)));
 
             assert_eq!(mgr.depth("logs").unwrap(), 2);
@@ -1461,28 +1635,30 @@ mod tests {
     fn test_dedup_zero_window_never_blocks() {
         with_manager(|mut mgr| {
             mgr.declare_queue_with_retention(
-                "events",
+                "instant",
                 RetentionPolicy::new(None, None, None, Some(0)),
             )
             .unwrap();
 
-            let outcome1 = mgr.publish(
-                "events",
-                Message::new(b"a".to_vec(), std::collections::HashMap::new())
-                    .with_dedup_key("a"),
-            )
-            .unwrap();
+            let outcome1 = mgr
+                .publish(
+                    "instant",
+                    Message::new(b"a".to_vec(), std::collections::HashMap::new())
+                        .with_dedup_key("k"),
+                )
+                .unwrap();
             assert!(matches!(outcome1, PublishOutcome::Stored(_)));
 
-            let outcome2 = mgr.publish(
-                "events",
-                Message::new(b"a".to_vec(), std::collections::HashMap::new())
-                    .with_dedup_key("a"),
-            )
-            .unwrap();
+            let outcome2 = mgr
+                .publish(
+                    "instant",
+                    Message::new(b"b".to_vec(), std::collections::HashMap::new())
+                        .with_dedup_key("k"),
+                )
+                .unwrap();
             assert!(matches!(outcome2, PublishOutcome::Stored(_)));
 
-            assert_eq!(mgr.depth("events").unwrap(), 2);
+            assert_eq!(mgr.depth("instant").unwrap(), 2);
         });
     }
 
@@ -1490,11 +1666,10 @@ mod tests {
     fn test_publish_returns_stored_uuid() {
         with_manager(|mut mgr| {
             mgr.declare_queue("q").unwrap();
-            let msg = Message::new(b"hello".to_vec(), std::collections::HashMap::new());
-            let msg_id = msg.id;
-
+            let msg = Message::new(b"uid".to_vec(), std::collections::HashMap::new());
+            let stored_id = msg.id;
             let outcome = mgr.publish("q", msg).unwrap();
-            assert_eq!(outcome, PublishOutcome::Stored(msg_id));
+            assert_eq!(outcome, PublishOutcome::Stored(stored_id));
         });
     }
 }
